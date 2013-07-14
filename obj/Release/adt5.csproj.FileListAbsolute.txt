@@ -1,0 +1,17 @@
+e:\Bot\adt5\adt5\bin\Release\adt5.exe.config
+e:\Bot\adt5\adt5\bin\Release\Color.fx
+e:\Bot\adt5\adt5\bin\Release\Texture.fx
+e:\Bot\adt5\adt5\bin\Release\adt5.exe
+e:\Bot\adt5\adt5\bin\Release\adt5.pdb
+e:\Bot\adt5\adt5\bin\Release\SharpDX.D3DCompiler.dll
+e:\Bot\adt5\adt5\bin\Release\SharpDX.Direct3D11.dll
+e:\Bot\adt5\adt5\bin\Release\SharpDX.dll
+e:\Bot\adt5\adt5\bin\Release\SharpDX.DXGI.dll
+e:\Bot\adt5\adt5\bin\Release\SharpDX.xml
+e:\Bot\adt5\adt5\bin\Release\SharpDX.D3DCompiler.xml
+e:\Bot\adt5\adt5\bin\Release\SharpDX.Direct3D11.xml
+e:\Bot\adt5\adt5\bin\Release\SharpDX.DXGI.xml
+e:\Bot\adt5\adt5\obj\Release\adt5.Properties.Resources.resources
+e:\Bot\adt5\adt5\obj\Release\adt5.csproj.GenerateResource.Cache
+e:\Bot\adt5\adt5\obj\Release\adt5.exe
+e:\Bot\adt5\adt5\obj\Release\adt5.pdb
