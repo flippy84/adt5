@@ -87,40 +87,17 @@ namespace adt5
                 new Shader(device, "Texture.fx", new[ ]
                 {
                     new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 0),
-                    new InputElement("TEXCOORD", 0, Format.R32G32_Float, 16, 0)
+                    new InputElement("TEXCOORD", 0, Format.R32G32_Float, 16, 0),
+                    new InputElement("TEXCOORD", 1, Format.R32G32_Float, 24, 0)
                 })
             };
-
-            /*var vertexShaderByteCode = ShaderBytecode.CompileFromFile("Color.fx", "VS", "vs_4_0");
-            var vertexShader = new VertexShader(device, vertexShaderByteCode);
-
-            var pixelShaderByteCode = ShaderBytecode.CompileFromFile("Color.fx", "PS", "ps_4_0");
-            var pixelShader = new PixelShader(device, pixelShaderByteCode);
-
-            var signature = ShaderSignature.GetInputSignature(vertexShaderByteCode);
-
-            var layout = new InputLayout(device, signature, new[ ]
-            {
-                new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 0),
-                new InputElement("COLOR", 0, Format.R32G32B32A32_Float, 16, 0)
-            });*/
-
-            /*var texPixelShaderBC = new PixelShader(ShaderBytecode.CompileFromFile("Texture.fx", "PS", "ps_4_0");
-            var texPixelShader = new PixelShader(device, texPixelShaderBC);
-            var texSignature = ShaderSignature.GetInputSignature(ver)*/
-
-            /*var texLayout = new InputLayout(device, signature, new[ ]
-            {
-                new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 1),
-                new InputElement("TEXCOORD", 0, Format.R32G32_Float, 16, 1),
-            });*/
 
             #endregion
 
 
             context.InputAssembler.InputLayout = shaders[1].Layout;
-            //context.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(vertices, Utilities.SizeOf<Vector4>() * 2, 0));
-            context.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(vertices, Utilities.SizeOf<Vector4>() + Utilities.SizeOf<Vector2>(), 0));
+            context.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(vertices, Utilities.SizeOf<Vector4>() * 2, 0));
+            //context.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(vertices, Utilities.SizeOf<Vector4>() + Utilities.SizeOf<Vector2>()*2, 0));
             context.InputAssembler.SetIndexBuffer(indices, Format.R32_SInt, 0);
             context.InputAssembler.PrimitiveTopology = PrimitiveTopology.TriangleList;
             context.VertexShader.SetConstantBuffer(0, constantBuffer);
@@ -183,6 +160,22 @@ namespace adt5
 
             form.UserResized += (target, arg) => resized = true;
 
+            var sampler = new SamplerState(device, new SamplerStateDescription()
+            {
+                Filter = Filter.MinMagMipLinear,
+                AddressU = TextureAddressMode.Border,
+                AddressV = TextureAddressMode.Border,
+                AddressW = TextureAddressMode.Border,
+                BorderColor = Color.Red,
+                ComparisonFunction = Comparison.Never,
+                MaximumAnisotropy = 16,
+                MipLodBias = 0,
+                MinimumLod = 0,
+                MaximumLod = 0,
+            });
+
+            context.PixelShader.SetSampler(0, sampler);
+
             RenderLoop.Run(form, () =>
             {
                 if (resized)
@@ -238,8 +231,21 @@ namespace adt5
 
                 context.ClearRenderTargetView(renderView, Color4.Black);
                 context.ClearDepthStencilView(depthView, DepthStencilClearFlags.Depth, 1.0f, 0);
+
+                foreach (var tile in adt.hora.Mcnk)
+                {
+                    tile.Render(device);
+                }
+
+                /*for (int y = 6; y < 9; y++)
+                {
+                    for (int x = 6; x < 9; x++)
+                    {
+                        adt.hora.Mcnk[x, y].Render(device);
+                    }
+                }*/
                 
-                context.Draw(196608, 0);
+                //context.Draw(196608, 0);
                 swapChain.Present(0, PresentFlags.None);
             });
         }

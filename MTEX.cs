@@ -8,7 +8,7 @@ namespace adt5
 {
     class MTEX : AdtChunk
     {
-        private List<Texture2D> _textures = new List<Texture2D>();
+        private List<ShaderResourceView> _textures = new List<ShaderResourceView>();
 
         public MTEX(long offset, AdtInfo info) : base(offset, info)
         {
@@ -21,11 +21,11 @@ namespace adt5
             {
                 var file = new MpqFile(MpqArchive.Open(texture));
                 var blp = new BLP(file);
-                _textures.Add(Resource.FromMemory<Texture2D>(info.Device, blp.ToDDS()));
+                _textures.Add(new ShaderResourceView(info.Device, Resource.FromMemory<Texture2D>(info.Device, blp.ToDDS())));
             }
         }
 
-        public Texture2D[ ] Textures
+        public ShaderResourceView[] Textures
         {
             get { return _textures.ToArray(); }
         }
@@ -61,7 +61,7 @@ namespace adt5
     struct DDSPixelFormat
     {
         public int Size;
-        public int Flags;
+        public DDPF Flags;
         public Magic FourCC;
         public int RGBBitCount;
         public int RBitMask;
@@ -85,7 +85,7 @@ namespace adt5
         public int[] Reserved1;
 
         public DDSPixelFormat PixelFormat;
-        public int Caps;
+        public DDSCAPS Caps;
         public int Caps2;
         public int Caps3;
         public int Caps4;
@@ -124,15 +124,15 @@ namespace adt5
             var header = new DDSHeader
             {
                 Size = 124,
-                Flags = DDSD.Caps & DDSD.HEIGHT & DDSD.Width & DDSD.PixelFormat,
-                Caps = DDSCapsTexture,
+                Flags = DDSD.Caps & DDSD.Height & DDSD.Width & DDSD.PixelFormat,
+                Caps = DDSCAPS.Texture,
                 Height = _height,
                 Width = _width,
                 PixelFormat =
                 {
                     Size = 32,
-                    Flags = DDPFFourCC,
-                    FourCC = Magic.DXTF1
+                    Flags = DDPF.FourCC,
+                    FourCC = Magic.DXT1
                 }
             };
 
@@ -153,15 +153,29 @@ namespace adt5
     enum Magic
     {
         DDS = 0x20534444,
-        DXTF1 = 0x31545844,
+        DXT1 = 0x31545844,
     }
 
     [Flags]
     enum DDSD
     {
         Caps = 0x1,
-        HEIGHT = 0x2,
+        Height = 0x2,
         Width = 0x4,
+        Rgb = 0x40,
         PixelFormat = 0x1000
     };
+
+    [Flags]
+    enum DDSCAPS
+    {
+        Texture = 0x1000
+    }
+
+    [Flags]
+    enum DDPF
+    {
+        FourCC = 0x4,
+        Rgb = 0x40
+    }
 }

@@ -1,6 +1,6 @@
 ﻿using System.IO;
 using SharpDX;
-using SharpDX.DXGI;
+//using SharpDX.DXGI;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Linq;
@@ -35,18 +35,16 @@ namespace adt5
             }
         }
 
-        public Vector3[] TerrainVerticesTextured
+        public Vector4[] TerrainVerticesTextured
         {
             get
             {
-                var vertices = new List<Vector3>();
+                var vertices = new List<Vector4>();
 
                 foreach (var mcnk in hora.Mcnk)
                 {
                     vertices.AddRange(mcnk.TerrainVerticesTextured);
                 }
-
-                //vertices.AddRange(hora.Mcnk[0,0].TerrainVerticesTextured);
 
                 return vertices.ToArray();
             }
@@ -88,7 +86,7 @@ namespace adt5
             hora = new AdtFile(new Int2(X, Y), map, boundingBox, device);
         }
 
-        private AdtFile hora;
+        public AdtFile hora;
     }
 
     struct AdtInfo
@@ -97,7 +95,7 @@ namespace adt5
         public int X;
         public int Y;
         public Device Device;
-        public Texture2D[ ] Textures;
+        public ShaderResourceView[] Textures;
     }
 
     internal class AdtFile
@@ -131,7 +129,7 @@ namespace adt5
                 }
             }
 
-            var textureView = new ShaderResourceView(device, _info.Textures[3]);
+            //var textureView = new ShaderResourceView(device, _info.Textures[3]);
 
             var sampler = new SamplerState(device, new SamplerStateDescription()
             {
@@ -148,7 +146,12 @@ namespace adt5
             });
 
             device.ImmediateContext.PixelShader.SetSampler(0, sampler);
-            device.ImmediateContext.PixelShader.SetShaderResource(0, textureView);
+            //device.ImmediateContext.PixelShader.SetShaderResource(0, textureView);
+
+            /*device.ImmediateContext.PixelShader.SetShaderResource(0, new ShaderResourceView(device, _info.Textures[5]));
+            device.ImmediateContext.PixelShader.SetShaderResource(1, new ShaderResourceView(device, _info.Textures[1]));
+            device.ImmediateContext.PixelShader.SetShaderResource(2, new ShaderResourceView(device, _info.Textures[2]));
+            device.ImmediateContext.PixelShader.SetShaderResource(3, new ShaderResourceView(device, _info.Textures[3]));*/
         }
 
         public long GetChunkPosition(string id)
@@ -178,13 +181,28 @@ namespace adt5
 
         private Vector4 color = new Vector4(0f, 1f, 0f, 1f);
         private Vector4 color2 = new Vector4(0f, .5f, 0f, 1f);
+        private ShaderResourceView[ ] _textures;
 
-        public Vector3[] TerrainVerticesTextured
+        Random rand = new Random();
+
+        public int StartIndex { get; set; }
+
+        public void Render(Device device)
+        {
+            device.ImmediateContext.PixelShader.SetShaderResource(0, mcal.maps[0]);
+
+            device.ImmediateContext.Draw(768, StartIndex);
+        }
+
+        const float step = 0.0625f;
+
+        #region Terrain vertices, textured or colored
+
+        public Vector4[ ] TerrainVerticesTextured
         {
             get
             {
-
-                var vertices = new List<Vector3>();
+                var vertices = new List<Vector4>();
 
                 for (var y = 0; y < 8; y++)
                 {
@@ -192,21 +210,21 @@ namespace adt5
                     {
                         vertices.AddRange(new[ ]
                         {
-                            _outerPosition[x + 1, y], new Vector3(1, 1, 0),
-                            _outerPosition[x, y], new Vector3(1, 0, 0),
-                            _middlePosition[x, y], new Vector3(1, .5f, .5f),
+                            new Vector4(_outerPosition[x + 1, y], 1), new Vector4(1, 0, _outerUV[x + 1, y].X, _outerUV[x + 1, y].Y),
+                            new Vector4(_outerPosition[x, y], 1), new Vector4(0, 0, _outerUV[x, y].X, _outerUV[x, y].Y),
+                            new Vector4(_middlePosition[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y),
 
-                            _outerPosition[x + 1, y + 1], new Vector3(1, 1, 1),
-                            _outerPosition[x + 1, y], new Vector3(1, 1, 0),
-                            _middlePosition[x, y], new Vector3(1, .5f, .5f),
+                            new Vector4(_outerPosition[x + 1, y + 1], 1), new Vector4(1, 1, _outerUV[x + 1, y + 1].X, _outerUV[x + 1, y + 1].Y),
+                            new Vector4(_outerPosition[x + 1, y], 1), new Vector4(1, 0, _outerUV[x + 1, y].X, _outerUV[x + 1, y].Y),
+                            new Vector4(_middlePosition[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y),
 
-                            _outerPosition[x, y + 1], new Vector3(1, 0, 1),
-                            _outerPosition[x + 1, y + 1], new Vector3(1, 1, 1),
-                            _middlePosition[x, y], new Vector3(1, .5f, .5f),
+                            new Vector4(_outerPosition[x, y + 1], 1), new Vector4(0, 1, _outerUV[x, y + 1].X, _outerUV[x, y + 1].Y),
+                            new Vector4(_outerPosition[x + 1, y + 1], 1), new Vector4(1, 1, _outerUV[x + 1, y + 1].X, _outerUV[x + 1, y + 1].Y),
+                            new Vector4(_middlePosition[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y),
 
-                            _outerPosition[x, y], new Vector3(1, 0, 0),
-                            _outerPosition[x, y + 1], new Vector3(1, 0, 1),
-                            _middlePosition[x, y], new Vector3(1, .5f, .5f)
+                            new Vector4(_outerPosition[x, y], 1), new Vector4(0, 0, _outerUV[x, y].X, _outerUV[x, y].Y),
+                            new Vector4(_outerPosition[x, y + 1], 1), new Vector4(0, 1, _outerUV[x, y + 1].X, _outerUV[x, y + 1].Y),
+                            new Vector4(_middlePosition[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y)
                         });
                     }
                 }
@@ -215,9 +233,10 @@ namespace adt5
             }
         }
 
-        public Vector4[] TerrainVertices
+        public Vector4[ ] TerrainVertices
         {
-            get {
+            get
+            {
                 var vertices = new List<Vector4>();
 
                 for (var y = 0; y < 8; y++)
@@ -234,20 +253,14 @@ namespace adt5
                             new Vector4(_outerPosition[x + 1, y], 1f), color2,
                             new Vector4(_middlePosition[x, y], 1f), color2,
 
-                            
+
                             new Vector4(_outerPosition[x, y + 1], 1f), color,
                             new Vector4(_outerPosition[x + 1, y + 1], 1f), color,
                             new Vector4(_middlePosition[x, y], 1f), color,
-                            
+
                             new Vector4(_outerPosition[x, y], 1f), color2,
                             new Vector4(_outerPosition[x, y + 1], 1f), color2,
                             new Vector4(_middlePosition[x, y], 1f), color2,
-
-                            /*new Vector4(_outerPosition[x, y], 1f), color,
-                            new Vector4(_outerPosition[x + 1, y], 1f), color,
-                            new Vector4(_outerPosition[x + 1, y + 1], 1f), color,
-                            new Vector4(_outerPosition[x, y + 1], 1f), color,
-                            new Vector4(_middlePosition[x, y], 1f), color2,*/
                         });
                     }
                 }
@@ -255,6 +268,8 @@ namespace adt5
                 return vertices.ToArray();
             }
         }
+
+        #endregion
 
         public int[ ] TerrainIndices
         {
@@ -284,15 +299,32 @@ namespace adt5
         private Vector3[,] _outerPosition;
         private Vector3[,] _middlePosition;
 
+        private Vector2[,] _outerUV;
+        private Vector2[,] _middleUV;
+
+        private MCNKInfo mcnkInfo;
+
+        private MCAL mcal;
+
         public MCNK(long offset, AdtInfo info)
             : base(offset, info)
         {
             info.File.Seek(offset + 8, SeekOrigin.Begin);
-            var mcnkInfo = info.File.ReadStruct<MCNKInfo>();
+            mcnkInfo = info.File.ReadStruct<MCNKInfo>();
             MCVT hora = new MCVT(mcnkInfo.HeightOffset + Position, info);
+            MCLY mcly = new MCLY(mcnkInfo.LayerOffset + Position, info);
+            mcal = new MCAL(mcnkInfo.AlphaOffset + Position, info, mcly.NumLayers - 1);
+            StartIndex = (mcnkInfo.X * 16 + mcnkInfo.Y) * 768;
+
+            _textures = info.Textures;
+
+            var alphaMaps = mcal.maps;
 
             _outerPosition = new Vector3[9,9];
             _middlePosition = new Vector3[8,8];
+
+            _outerUV = new Vector2[9, 9];
+            _middleUV = new Vector2[8, 8];
 
             for (int y = 0; y < 9; y++)
             {
@@ -302,7 +334,9 @@ namespace adt5
                     _outerPosition[x, y].Y = hora.Heights[(8 - y) * 17 + x];
                     _outerPosition[x, y].Z = y * 25 / 6f;
                     _outerPosition[x, y] += mcnkInfo.Position;
-                    //_outerPosition[x, y].Y = 0;
+
+                    _outerUV[x, y].X = x * 1 / 8f;
+                    _outerUV[x, y].Y = y * 1 / 8f;
                 }
             }
 
@@ -314,10 +348,132 @@ namespace adt5
                     _middlePosition[x, y].Y = hora.Heights[(7 - y) * 17 + 9 + x];
                     _middlePosition[x, y].Z = y * 25 / 6f + 25 / 12f;
                     _middlePosition[x, y] += mcnkInfo.Position;
-                    //_middlePosition[x, y].Y = 0;
+
+                    _middleUV[x, y].X = x * 1 / 8f + 1 / 16f;
+                    _middleUV[x, y].Y = y * 1 / 8f + 1 / 16f;
                 }
             }
         }
+    }
+
+    internal class MCAL : AdtChunk
+    {
+        public ShaderResourceView[ ] maps;
+
+        public MCAL(long offset, AdtInfo info, int layers)
+            : base(offset, info)
+        {
+            info.File.Seek(offset, SeekOrigin.Begin);
+            var header = info.File.ReadStruct<ChunkHeader>();
+
+            maps = new ShaderResourceView[layers];
+
+            var size = header.Size / layers;
+
+            byte[ ] alpha = new byte[64 * 64];
+            byte[] alpha2 = new byte[64*64];
+
+            for (int i = 0; i < layers; i++)
+            {
+                switch (size)
+                {
+                    case 2048:
+                        for (int j = 0; j < 2048; j++)
+                        {
+                            byte b = info.File.ReadBytes(1)[0];
+                            alpha[j * 2] = (byte) ((b & 0xF) * 17);
+                            alpha[j * 2 + 1] = (byte) ((b >> 4) * 17);
+                        }
+
+                        for (int y = 0; y < 64; y++)
+                        {
+                            for (int x = 0; x < 64; x++)
+                            {
+                                alpha2[(63 - y) * 64 + x] = alpha[y * 64 + x];
+                            }
+                        }
+
+                        DDSHeader dds = new DDSHeader()
+                        {
+                            Size = 124,
+                            Flags = DDSD.Caps & DDSD.Height & DDSD.Width &DDSD.PixelFormat,
+                            Caps = DDSCAPS.Texture,
+                            Height = 64,
+                            Width = 64,
+                            PixelFormat = new DDSPixelFormat()
+                            {
+                                Size = 32,
+                                Flags = DDPF.Rgb,
+                                RGBBitCount = 24,
+                                RBitMask = 0x00FF0000,
+                                GBitMask = 0x0000FF00,
+                                BBitMask = 0x000000FF
+                            }
+                        };
+
+                        var file = new BinaryWriter(new MemoryStream());
+
+                        var buffer = new byte[Marshal.SizeOf(dds)];
+                        GCHandle h = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+                        Marshal.StructureToPtr(dds, h.AddrOfPinnedObject(), false);
+                        h.Free();
+
+                        file.Write((int)Magic.DDS);
+                        file.Write(buffer);
+
+                        foreach (var b in alpha2)
+                        {
+                            file.Write(new[ ] { b, b, b });
+                        }
+
+                        file.Seek(0, SeekOrigin.Begin);
+
+                        var bytes = new BinaryReader(file.BaseStream).ReadBytes((int) file.BaseStream.Length);
+                        maps[i] = new ShaderResourceView(info.Device, Resource.FromMemory<Texture2D>(info.Device, bytes));
+
+                        break;
+                    case 4096:
+                        throw new NotImplementedException();
+                        break;
+                    default:
+                        throw new NotImplementedException();
+                        break;
+                }
+            }
+        }
+
+        private Texture2D ToTexture(Device device, float[ ] alpha)
+        {
+            return null;
+        }
+    }
+
+    internal class MCLY : AdtChunk
+    {
+        public int NumLayers { get; private set; }
+
+        public MCLY(long offset, AdtInfo info)
+            : base(offset, info)
+        {
+            info.File.Seek(offset, SeekOrigin.Begin);
+            var header = info.File.ReadStruct<ChunkHeader>();
+
+            NumLayers = header.Size / 16;
+            MCLYLayer[] layers = new MCLYLayer[NumLayers];
+
+            for (int i = 0; i < NumLayers; i++)
+            {
+                layers[i] = info.File.ReadStruct<MCLYLayer>();
+            }
+        }
+    }
+
+    internal struct MCLYLayer
+    {
+        public int Texture;
+        public int Flags;
+        public int Offset;
+        public int Effect;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -329,8 +485,12 @@ namespace adt5
         public int nLayers;
         public int nDoodads;
         public int HeightOffset;
+        private int kuk;
+        public int LayerOffset;
+        private int kuk2;
+        public int AlphaOffset;
 
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
         private int[ ] pad;
         private Vector3 _position;
 
@@ -389,8 +549,6 @@ namespace adt5
         }
 
     }
-
-    
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct ChunkHeader
