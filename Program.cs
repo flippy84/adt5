@@ -163,9 +163,9 @@ namespace adt5
             var sampler = new SamplerState(device, new SamplerStateDescription()
             {
                 Filter = Filter.MinMagMipLinear,
-                AddressU = TextureAddressMode.Border,
-                AddressV = TextureAddressMode.Border,
-                AddressW = TextureAddressMode.Border,
+                AddressU = TextureAddressMode.Wrap,
+                AddressV = TextureAddressMode.Wrap,
+                AddressW = TextureAddressMode.Wrap,
                 BorderColor = Color.Red,
                 ComparisonFunction = Comparison.Never,
                 MaximumAnisotropy = 16,

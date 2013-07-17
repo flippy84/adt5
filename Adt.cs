@@ -182,6 +182,7 @@ namespace adt5
         private Vector4 color = new Vector4(0f, 1f, 0f, 1f);
         private Vector4 color2 = new Vector4(0f, .5f, 0f, 1f);
         private ShaderResourceView[ ] _textures;
+        private MCLY mcly;
 
         Random rand = new Random();
 
@@ -189,7 +190,12 @@ namespace adt5
 
         public void Render(Device device)
         {
-            device.ImmediateContext.PixelShader.SetShaderResource(0, mcal.maps[0]);
+            for (int i = 0; i < 4; i++)
+            {
+                device.ImmediateContext.PixelShader.SetShaderResource(i, _textures[i < mcly.NumLayers ? mcly.Layers[i].TextureId : 0]);
+            }
+
+            device.ImmediateContext.PixelShader.SetShaderResource(4, mcal.maps[0]);
 
             device.ImmediateContext.Draw(768, StartIndex);
         }
@@ -312,7 +318,7 @@ namespace adt5
             info.File.Seek(offset + 8, SeekOrigin.Begin);
             mcnkInfo = info.File.ReadStruct<MCNKInfo>();
             MCVT hora = new MCVT(mcnkInfo.HeightOffset + Position, info);
-            MCLY mcly = new MCLY(mcnkInfo.LayerOffset + Position, info);
+            mcly = new MCLY(mcnkInfo.LayerOffset + Position, info);
             mcal = new MCAL(mcnkInfo.AlphaOffset + Position, info, mcly.NumLayers - 1);
             StartIndex = (mcnkInfo.X * 16 + mcnkInfo.Y) * 768;
 
@@ -370,9 +376,9 @@ namespace adt5
 
             var size = header.Size / layers;
 
-            byte[ ] alpha = new byte[64 * 64];
-            byte[] alpha2 = new byte[64*64];
-
+            byte[ ][ ] alpha = { new byte[64 * 64], new byte[64 * 64], new byte[64 * 64] };
+            byte[ ][ ] alpha2 = { new byte[64 * 64], new byte[64 * 64], new byte[64 * 64] };
+            
             for (int i = 0; i < layers; i++)
             {
                 switch (size)
@@ -381,55 +387,17 @@ namespace adt5
                         for (int j = 0; j < 2048; j++)
                         {
                             byte b = info.File.ReadBytes(1)[0];
-                            alpha[j * 2] = (byte) ((b & 0xF) * 17);
-                            alpha[j * 2 + 1] = (byte) ((b >> 4) * 17);
+                            alpha[i][j * 2] = (byte) ((b & 0xF) * 17);
+                            alpha[i][j * 2 + 1] = (byte) ((b >> 4) * 17);
                         }
 
                         for (int y = 0; y < 64; y++)
                         {
                             for (int x = 0; x < 64; x++)
                             {
-                                alpha2[(63 - y) * 64 + x] = alpha[y * 64 + x];
+                                alpha2[i][(63 - y) * 64 + x] = alpha[i][y * 64 + x];
                             }
                         }
-
-                        DDSHeader dds = new DDSHeader()
-                        {
-                            Size = 124,
-                            Flags = DDSD.Caps & DDSD.Height & DDSD.Width &DDSD.PixelFormat,
-                            Caps = DDSCAPS.Texture,
-                            Height = 64,
-                            Width = 64,
-                            PixelFormat = new DDSPixelFormat()
-                            {
-                                Size = 32,
-                                Flags = DDPF.Rgb,
-                                RGBBitCount = 24,
-                                RBitMask = 0x00FF0000,
-                                GBitMask = 0x0000FF00,
-                                BBitMask = 0x000000FF
-                            }
-                        };
-
-                        var file = new BinaryWriter(new MemoryStream());
-
-                        var buffer = new byte[Marshal.SizeOf(dds)];
-                        GCHandle h = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-                        Marshal.StructureToPtr(dds, h.AddrOfPinnedObject(), false);
-                        h.Free();
-
-                        file.Write((int)Magic.DDS);
-                        file.Write(buffer);
-
-                        foreach (var b in alpha2)
-                        {
-                            file.Write(new[ ] { b, b, b });
-                        }
-
-                        file.Seek(0, SeekOrigin.Begin);
-
-                        var bytes = new BinaryReader(file.BaseStream).ReadBytes((int) file.BaseStream.Length);
-                        maps[i] = new ShaderResourceView(info.Device, Resource.FromMemory<Texture2D>(info.Device, bytes));
 
                         break;
                     case 4096:
@@ -440,6 +408,49 @@ namespace adt5
                         break;
                 }
             }
+
+            DDSHeader dds = new DDSHeader()
+            {
+                Size = 124,
+                Flags = DDSD.Caps & DDSD.Height & DDSD.Width & DDSD.PixelFormat,
+                Caps = DDSCAPS.Texture,
+                Height = 64,
+                Width = 64,
+                PixelFormat = new DDSPixelFormat()
+                {
+                    Size = 32,
+                    Flags = DDPF.Rgb,
+                    RGBBitCount = 24,
+                    RBitMask = 0x00FF0000,
+                    GBitMask = 0x0000FF00,
+                    BBitMask = 0x000000FF
+                }
+            };
+
+            var file = new BinaryWriter(new MemoryStream());
+
+            var buffer = new byte[Marshal.SizeOf(dds)];
+            GCHandle h = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+            Marshal.StructureToPtr(dds, h.AddrOfPinnedObject(), false);
+            h.Free();
+
+            file.Write((int)Magic.DDS);
+            file.Write(buffer);
+
+            /*foreach (var b in alpha2)
+            {
+                file.Write(new[] { b[0], b[1], b[2] });
+            }*/
+
+            for (int i = 0; i < 64*64; i++)
+            {
+                file.Write(new[] { alpha2[0][i], alpha2[1][i], alpha2[2][i] });
+            }
+
+            file.Seek(0, SeekOrigin.Begin);
+
+            var bytes = new BinaryReader(file.BaseStream).ReadBytes((int)file.BaseStream.Length);
+            maps[0] = new ShaderResourceView(info.Device, Resource.FromMemory<Texture2D>(info.Device, bytes));
         }
 
         private Texture2D ToTexture(Device device, float[ ] alpha)
@@ -451,6 +462,7 @@ namespace adt5
     internal class MCLY : AdtChunk
     {
         public int NumLayers { get; private set; }
+        public MCLYLayer[] Layers { get; private set; }
 
         public MCLY(long offset, AdtInfo info)
             : base(offset, info)
@@ -459,18 +471,18 @@ namespace adt5
             var header = info.File.ReadStruct<ChunkHeader>();
 
             NumLayers = header.Size / 16;
-            MCLYLayer[] layers = new MCLYLayer[NumLayers];
+            Layers = new MCLYLayer[NumLayers];
 
             for (int i = 0; i < NumLayers; i++)
             {
-                layers[i] = info.File.ReadStruct<MCLYLayer>();
+                Layers[i] = info.File.ReadStruct<MCLYLayer>();
             }
         }
     }
 
     internal struct MCLYLayer
     {
-        public int Texture;
+        public int TextureId;
         public int Flags;
         public int Offset;
         public int Effect;

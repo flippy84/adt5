@@ -13,8 +13,9 @@ struct PS_IN
 };
 
 float4x4 worldViewProj;
-Texture2D layer[4];
 SamplerState pictureSampler;
+Texture2D layer[5];
+int layers;
 
 PS_IN VS( VS_IN input )
 {
@@ -29,12 +30,22 @@ PS_IN VS( VS_IN input )
 
 float4 PS( PS_IN input ) : SV_Target
 {
-	//return layer[0].Sample(pictureSampler, input.tex);
-	float4 color[4];
-	color[0] = layer[0].Sample(pictureSampler, input.map);
+	float4 color[5];
+	float4 ret;
+
+	color[0] = layer[0].Sample(pictureSampler, input.tex);
 	color[1] = layer[1].Sample(pictureSampler, input.tex);
 	color[2] = layer[2].Sample(pictureSampler, input.tex);
 	color[3] = layer[3].Sample(pictureSampler, input.tex);
+	color[4] = layer[4].Sample(pictureSampler, input.map);
 
-	return color[0];
+	//ret = lerp(color[0],color[3],color[4][0]);
+	//ret = lerp(color[0],color[1],color[4][2]);
+	//ret = lerp(color[0],color[2],color[4][1]);
+
+	ret = lerp(color[0], color[3], color[4][0]);
+	ret = lerp(ret, color[1], color[4][2]);
+	ret = lerp(ret, color[2], color[4][1]);
+
+	return ret;
 }
