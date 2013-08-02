@@ -1,4 +1,6 @@
-﻿using System.IO;
+﻿using System.Collections;
+using System.Drawing.Imaging;
+using System.IO;
 using SharpDX;
 //using SharpDX.DXGI;
 using System.Runtime.InteropServices;
@@ -6,9 +8,16 @@ using System.Text;
 using System.Linq;
 using System;
 using System.Collections.Generic;
+using SharpDX.DXGI;
 using Device = SharpDX.Direct3D11.Device;
 using Int2 = SharpDX.DrawingPoint;
 using SharpDX.Direct3D11;
+using Resource = SharpDX.Direct3D11.Resource;
+using SharpDX.Toolkit.Graphics;
+using Texture2D = SharpDX.Direct3D11.Texture2D;
+using SamplerState = SharpDX.Direct3D11.SamplerState;
+using Buffer = SharpDX.Direct3D11.Buffer;
+using MapFlags = SharpDX.Direct3D11.MapFlags;
 
 namespace adt5
 {
@@ -96,6 +105,131 @@ namespace adt5
         public int Y;
         public Device Device;
         public ShaderResourceView[] Textures;
+        public List<int> Doodads;
+        public List<int> Wmos;
+    }
+
+    class Model
+    {
+        private static Buffer _vertexBuffer;
+        private Device _device;
+        private int index;
+        private int count;
+        private static long vertexOffset;
+        private Vector4[] kukVertices;
+
+        public Model(Device device, Vector4[] vertices)
+        {
+            var context = device.ImmediateContext;
+            if (_vertexBuffer == null)
+            {
+                _vertexBuffer = new Buffer(device, Utilities.SizeOf<Vector4>() * 2 * 100000, ResourceUsage.Dynamic, BindFlags.VertexBuffer, CpuAccessFlags.Write, ResourceOptionFlags.None, Utilities.SizeOf<Vector4>() * 2);
+                context.InputAssembler.SetVertexBuffers(1, new VertexBufferBinding(_vertexBuffer, Utilities.SizeOf<Vector4>() * 2, 0));
+            }
+
+            DataStream stream;
+            context.MapSubresource(_vertexBuffer, MapMode.WriteNoOverwrite, MapFlags.None, out stream);
+
+            stream.Seek(vertexOffset, SeekOrigin.Begin);
+            
+            count = vertices.Length / 2;
+            index = (int) stream.Position / 32;
+
+            stream.WriteRange(vertices);
+
+            vertexOffset = stream.Position;
+
+            context.UnmapSubresource(_vertexBuffer, 0);
+        }
+
+        public void Render(Device device)
+        {
+            var context = device.ImmediateContext;
+
+            context.Draw(count, index);
+        }
+
+        public static Vector4[] Parse(string s, Vector3 position, Vector3 rotation, float scale)
+        {
+            var vertices = new List<Vector4>();
+            var color = new Color4(1, 0, 0, 1);
+
+            var file = new MpqFile(MpqArchive.Open(s));
+            var header = file.ReadStruct<M2Header>();
+
+            if(header.magic != "MD20")
+                throw new NotSupportedException();
+
+            if(header.version != 264)
+                throw new NotSupportedException();
+
+            if (header.numBoundingVertices == 0)
+                return vertices.ToArray();
+
+            var indices = new short[header.numBoundingTriangles];
+            file.Seek(header.offsetBoundingTriangles, SeekOrigin.Begin);
+
+            for (int i = 0; i < indices.Length; i++)
+            {
+                indices[i] = file.ReadInt16();
+            }
+
+            var vertices2 = new Vector4[header.numBoundingVertices];
+            file.Seek(header.offsetBoundingVertices, SeekOrigin.Begin);
+            float[] tmp = new float[3];
+
+            var m = Matrix.Identity;
+            float d = (float)(Math.PI / 180);
+            m *= Matrix.RotationX(rotation.X * d);
+            m *= Matrix.RotationY(-rotation.Y * d);
+            m *= Matrix.RotationZ(rotation.Z * d);
+            m *= Matrix.Scaling(scale);
+            m *= Matrix.Translation(position);
+
+            Vector4 pos = new Vector4(position, 0);
+
+            for (int i = 0; i < vertices2.Length; i++)
+            {
+                tmp[0] = file.ReadSingle();
+                tmp[1] = file.ReadSingle();
+                tmp[2] = file.ReadSingle();
+
+                vertices2[i] = new Vector4(tmp[1], tmp[2], -tmp[0], 1);
+                vertices2[i] = Vector4.Transform(vertices2[i], m);
+            }
+
+            for (int i = 0; i < indices.Length; i += 3)
+            {
+                vertices.AddRange(new[]
+                {
+                    vertices2[indices[i + 2]], color.ToVector4(),
+                    vertices2[indices[i + 1]], color.ToVector4(),
+                    vertices2[indices[i]], color.ToVector4(),
+                });
+            }
+
+            return vertices.ToArray();
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct M2Header
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
+        private char[] _magic;
+        public uint version;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0xD0)]
+        private byte[] pad;
+
+        public uint numBoundingTriangles;
+        public uint offsetBoundingTriangles;
+        public uint numBoundingVertices;
+        public uint offsetBoundingVertices;
+
+        public string magic
+        {
+            get { return new string(_magic, 0, 4); }
+        }
     }
 
     internal class AdtFile
@@ -103,6 +237,67 @@ namespace adt5
         public MpqFile File;
         public MCNK[,] Mcnk = new MCNK[16,16];
         private AdtInfo _info;
+        public List<Model> adtmodels = new List<Model>();
+
+        private byte[,] alphamap = new byte[8,64 * 64 * 16 * 16];
+
+        private void ByteArrayToTexture(Device device, byte[ ] alpha)
+        {
+            var dds = new DDSHeader
+            {
+                Size = 124,
+                Flags = DDSD.Caps | DDSD.Height | DDSD.Width | DDSD.PixelFormat,
+                Caps = DDSCAPS.Texture,
+                Height = 1024,
+                Width = 1024,
+                PixelFormat = new DDSPixelFormat
+                {
+                    Size = 32,
+                    Flags = DDPF.Rgb,
+                    RGBBitCount = 24,
+                    RBitMask = 0x00FF0000,
+                    GBitMask = 0x0000FF00,
+                    BBitMask = 0x000000FF
+                }
+            };
+
+            //var jude = BitConverter.ToInt32(new [ ] { (byte) 'D', (byte) 'X', (byte) '1', (byte) '0' }, 0);
+
+            var file = new BinaryWriter(new MemoryStream());
+
+            var buffer = new byte[Marshal.SizeOf(dds)];
+            GCHandle h = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+            Marshal.StructureToPtr(dds, h.AddrOfPinnedObject(), false);
+            h.Free();
+
+            file.Write((int)Magic.DDS);
+            file.Write(buffer);
+
+            /*buffer = new byte[Marshal.SizeOf(dds2)];
+            h = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+            Marshal.StructureToPtr(dds2, h.AddrOfPinnedObject(),false);
+            h.Free();
+
+            file.Write(buffer);*/
+
+            for (int i = 0; i < alpha.Length; i++)
+            {
+                var b = alpha[i];
+                file.Write(b);
+            }
+
+            file.Seek(0, SeekOrigin.Begin);
+
+            var bytes = new BinaryReader(file.BaseStream).ReadBytes((int)file.BaseStream.Length);
+
+            var hora = new FileStream("kuk.dds", FileMode.Create);
+            hora.Write(bytes, 0, bytes.Length);
+            hora.Close();
+
+            var resource = Resource.FromMemory<Texture2D>(device, bytes);
+
+            device.ImmediateContext.PixelShader.SetShaderResource(4, new ShaderResourceView(device, resource));
+        }
 
         public AdtFile(Int2 pos, string map, BoundingBox bbox, Device device)
         {
@@ -113,13 +308,17 @@ namespace adt5
                 File = File,
                 X = pos.X,
                 Y = pos.Y,
-                Device = device
+                Device = device,
+                Doodads = new List<int>(),
+                Wmos = new List<int>()
             };
 
             var mtex = new MTEX(GetChunkPosition("MTEX"), _info);
             _info.Textures = mtex.Textures;
 
             var mcin = new MCIN(GetChunkPosition("MCIN"), _info);
+
+            byte[ ] alpha = new byte[4096 * 3 * 16 * 16];
 
             for (int y = 0; y < 16; y++)
             {
@@ -129,11 +328,32 @@ namespace adt5
                 }
             }
 
-            //var textureView = new ShaderResourceView(device, _info.Textures[3]);
-
-            var sampler = new SamplerState(device, new SamplerStateDescription()
+            for (int y = 0; y < 1024; y++)
             {
-                Filter = Filter.MinMagMipLinear,
+                for (int x = 0; x < 16; x++)
+                {
+                    var kuk = Mcnk[x, 15 - (y / 64)].mcal.alpha2;
+                    Array.Copy(kuk, (y % 64) * 64 * 3, alpha, (y * 1024 + x * 64) * 3, 64 * 3);
+                }
+            }
+
+            for (int y = 0; y < 16; y++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int i = 1; i < Mcnk[x,y].mcly.NumLayers; i++)
+                    {
+                        var index = Mcnk[x, y].mcly.Layers[i].TextureId;
+                        var kuk = Mcnk[x, y].mcal.alpha[i - 1];
+                    }
+                }
+            }
+
+            ByteArrayToTexture(device, alpha);
+
+            var sampler = new SamplerState(device, new SamplerStateDescription
+            {
+                Filter = Filter.MinMagMipPoint,
                 AddressU = TextureAddressMode.Wrap,
                 AddressV = TextureAddressMode.Wrap,
                 AddressW = TextureAddressMode.Wrap,
@@ -146,12 +366,26 @@ namespace adt5
             });
 
             device.ImmediateContext.PixelShader.SetSampler(0, sampler);
-            //device.ImmediateContext.PixelShader.SetShaderResource(0, textureView);
 
-            /*device.ImmediateContext.PixelShader.SetShaderResource(0, new ShaderResourceView(device, _info.Textures[5]));
-            device.ImmediateContext.PixelShader.SetShaderResource(1, new ShaderResourceView(device, _info.Textures[1]));
-            device.ImmediateContext.PixelShader.SetShaderResource(2, new ShaderResourceView(device, _info.Textures[2]));
-            device.ImmediateContext.PixelShader.SetShaderResource(3, new ShaderResourceView(device, _info.Textures[3]));*/
+            //Models
+
+            _info.Doodads = _info.Doodads.Distinct().OrderBy(x => x).ToList();
+            _info.Wmos = _info.Wmos.OrderBy(wmo => wmo).Distinct().ToList();
+
+            var models = new MDDF(GetChunkPosition("MDDF"), _info);
+
+            _info.File.Seek(GetChunkPosition("MMDX"), SeekOrigin.Begin);
+            var header = _info.File.ReadStruct<ChunkHeader>();
+            var files = _info.File.ReadString(header.Size - 1).Split(new[] { '\0' });
+
+            foreach (var doodad in _info.Doodads)
+            {
+                var model = models[doodad];
+                var vertices = Model.Parse(files[model.mmidEntry], model.position, model.rotation, model.Scale);
+                if (vertices.Any() == false)
+                    continue;
+                adtmodels.Add(new Model(device, vertices));
+            }
         }
 
         public long GetChunkPosition(string id)
@@ -175,6 +409,121 @@ namespace adt5
         }
     }
 
+    internal class MDDF : AdtChunk, IEnumerable<MDDFEntry>
+    {
+        private readonly MDDFEntry[] _entries;
+
+        public MDDF(long position, AdtInfo info)
+            : base(position, info)
+        {
+            info.File.Seek(position, SeekOrigin.Begin);
+
+            var header = info.File.ReadStruct<ChunkHeader>();
+            var num = header.Size / Marshal.SizeOf(new MDDFEntry());
+            _entries = new MDDFEntry[num];
+            Count = num;
+
+            for (int i = 0; i < num; i++)
+            {
+                _entries[i] = info.File.ReadStruct<MDDFEntry>();
+            }
+        }
+
+        public int Count { get; private set; }
+
+        #region Enumerator
+
+        public MDDFEntry this[int i]
+        {
+            get { return _entries[i]; }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return GetEnumerator();
+        }
+
+        public IEnumerator<MDDFEntry> GetEnumerator()
+        {
+            return new MDDFEnum(_entries.ToList());
+        }
+
+        internal class MDDFEnum : IEnumerator<MDDFEntry>
+        {
+            private readonly MDDFEntry[] _entries;
+            private int _position = -1;
+
+            public MDDFEnum(List<MDDFEntry> entries)
+            {
+                _entries = entries.ToArray();
+            }
+
+            public bool MoveNext()
+            {
+                _position++;
+                return _position < _entries.Length;
+            }
+
+            public void Reset()
+            {
+                _position = -1;
+            }
+
+            object IEnumerator.Current
+            {
+                get { return Current; }
+            }
+
+            MDDFEntry IEnumerator<MDDFEntry>.Current
+            {
+                get { return Current; }
+            }
+
+            public MDDFEntry Current
+            {
+                get { return _entries[_position]; }
+            }
+
+            public void Dispose()
+            {
+            }
+        }
+
+        #endregion
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MDDFEntry
+    {
+        public int mmidEntry;
+        public int uniqueId;
+        private Vector3 _position;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+        private float[] _rotation;
+        private short _scale;
+        public short flags;
+
+        public Vector3 position
+        {
+            get
+            {
+                float step = 1600 / 3f * 32;
+                var ret = new Vector3(_position[0] - step, _position[1], -(_position[2] - step));
+                return ret;
+            }
+        }
+
+        public  Vector3 rotation
+        {
+            get
+            {
+                return new Vector3(_rotation);
+            }
+        }
+
+        public float Scale { get { return _scale / 1024f; } }
+    }
+
     internal class MCNK : AdtChunk
     {
         //public MCNK() { }
@@ -182,9 +531,7 @@ namespace adt5
         private Vector4 color = new Vector4(0f, 1f, 0f, 1f);
         private Vector4 color2 = new Vector4(0f, .5f, 0f, 1f);
         private ShaderResourceView[ ] _textures;
-        private MCLY mcly;
-
-        Random rand = new Random();
+        public MCLY mcly;
 
         public int StartIndex { get; set; }
 
@@ -195,7 +542,8 @@ namespace adt5
                 device.ImmediateContext.PixelShader.SetShaderResource(i, _textures[i < mcly.NumLayers ? mcly.Layers[i].TextureId : 0]);
             }
 
-            device.ImmediateContext.PixelShader.SetShaderResource(4, mcal.maps[0]);
+            /*if(_hasAlphaMap)
+                device.ImmediateContext.PixelShader.SetShaderResource(4, mcal.maps);*/
 
             device.ImmediateContext.Draw(768, StartIndex);
         }
@@ -266,7 +614,7 @@ namespace adt5
 
                             new Vector4(_outerPosition[x, y], 1f), color2,
                             new Vector4(_outerPosition[x, y + 1], 1f), color2,
-                            new Vector4(_middlePosition[x, y], 1f), color2,
+                            new Vector4(_middlePosition[x, y], 1f), color2
                         });
                     }
                 }
@@ -310,7 +658,9 @@ namespace adt5
 
         private MCNKInfo mcnkInfo;
 
-        private MCAL mcal;
+        public MCAL mcal;
+
+        private bool _hasAlphaMap = false;
 
         public MCNK(long offset, AdtInfo info)
             : base(offset, info)
@@ -318,13 +668,32 @@ namespace adt5
             info.File.Seek(offset + 8, SeekOrigin.Begin);
             mcnkInfo = info.File.ReadStruct<MCNKInfo>();
             MCVT hora = new MCVT(mcnkInfo.HeightOffset + Position, info);
+
+            //var mcrf = new MCRF(mcnkInfo.RefOffset + Position, info);
+
             mcly = new MCLY(mcnkInfo.LayerOffset + Position, info);
-            mcal = new MCAL(mcnkInfo.AlphaOffset + Position, info, mcly.NumLayers - 1);
+
+            if (mcnkInfo.sizeAlpha - 8 != 0)
+            {
+                _hasAlphaMap = true;
+
+                mcal = new MCAL(mcnkInfo.AlphaOffset + Position, info, mcly.Layers);
+            }
+
+            info.File.Seek(mcnkInfo.RefOffset + Position + 8, SeekOrigin.Begin);
+            for (int i = 0; i < mcnkInfo.nDoodads; i++)
+            {
+                 info.Doodads.Add(info.File.ReadInt32());
+            }
+
+            for (int i = 0; i < mcnkInfo.nMapObjs; i++)
+            {
+                info.Wmos.Add(info.File.ReadInt32());
+            }
+
             StartIndex = (mcnkInfo.X * 16 + mcnkInfo.Y) * 768;
 
             _textures = info.Textures;
-
-            var alphaMaps = mcal.maps;
 
             _outerPosition = new Vector3[9,9];
             _middlePosition = new Vector3[8,8];
@@ -338,11 +707,11 @@ namespace adt5
                 {
                     _outerPosition[x, y].X = x * 25 / 6f;
                     _outerPosition[x, y].Y = hora.Heights[(8 - y) * 17 + x];
-                    _outerPosition[x, y].Z = y * 25 / 6f;
+                    _outerPosition[x, y].Z = y * 25 / 6f - 1600 / 48f;
                     _outerPosition[x, y] += mcnkInfo.Position;
 
-                    _outerUV[x, y].X = x * 1 / 8f;
-                    _outerUV[x, y].Y = y * 1 / 8f;
+                    _outerUV[x, y].X = x * 1 / 128f + 1 / 16f * mcnkInfo.X;
+                    _outerUV[x, y].Y = y * 1 / 128f + 1 / 16f * (15 - mcnkInfo.Y);
                 }
             }
 
@@ -352,71 +721,89 @@ namespace adt5
                 {
                     _middlePosition[x, y].X = x * 25 / 6f + 25 / 12f;
                     _middlePosition[x, y].Y = hora.Heights[(7 - y) * 17 + 9 + x];
-                    _middlePosition[x, y].Z = y * 25 / 6f + 25 / 12f;
+                    _middlePosition[x, y].Z = y * 25 / 6f + 25 / 12f - 1600 / 48f;
                     _middlePosition[x, y] += mcnkInfo.Position;
 
-                    _middleUV[x, y].X = x * 1 / 8f + 1 / 16f;
-                    _middleUV[x, y].Y = y * 1 / 8f + 1 / 16f;
+                    _middleUV[x, y].X = (x) * 1 / 128f + 1 / 256f + 1 / 16f * mcnkInfo.X;
+                    _middleUV[x, y].Y = (y) * 1 / 128f + 1 / 256f + 1 / 16f * (15 - mcnkInfo.Y);
                 }
             }
         }
     }
 
+    internal class MCRF : AdtChunk
+    {
+        public MCRF(long offset, AdtInfo info)
+            : base(offset, info)
+        {
+        }
+    }
+
     internal class MCAL : AdtChunk
     {
-        public ShaderResourceView[ ] maps;
+        public ShaderResourceView maps;
+        public byte[ ][ ] alpha = { new byte[64 * 64], new byte[64 * 64], new byte[64 * 64] };
+        public byte[] alpha2 = new byte[4096 * 3];
 
-        public MCAL(long offset, AdtInfo info, int layers)
+        public MCAL(long offset, AdtInfo info, MCLYLayer[] layers)
             : base(offset, info)
         {
             info.File.Seek(offset, SeekOrigin.Begin);
             var header = info.File.ReadStruct<ChunkHeader>();
 
-            maps = new ShaderResourceView[layers];
+            /*if(header.Size == 0)
+                return;*/
+            int numLayers = 0;
 
-            var size = header.Size / layers;
+            foreach (var mclyLayer in layers)
+            {
+                if ((mclyLayer.Flags & 0x100) > 1)
+                    numLayers++;
+            }
 
-            byte[ ][ ] alpha = { new byte[64 * 64], new byte[64 * 64], new byte[64 * 64] };
-            byte[ ][ ] alpha2 = { new byte[64 * 64], new byte[64 * 64], new byte[64 * 64] };
+            var size = header.Size / numLayers;
             
-            for (int i = 0; i < layers; i++)
+            for (int i = 0; i < numLayers; i++)
             {
                 switch (size)
                 {
                     case 2048:
-                        for (int j = 0; j < 2048; j++)
-                        {
-                            byte b = info.File.ReadBytes(1)[0];
-                            alpha[i][j * 2] = (byte) ((b & 0xF) * 17);
-                            alpha[i][j * 2 + 1] = (byte) ((b >> 4) * 17);
-                        }
 
+                        byte b = 0;
                         for (int y = 0; y < 64; y++)
                         {
                             for (int x = 0; x < 64; x++)
                             {
-                                alpha2[i][(63 - y) * 64 + x] = alpha[i][y * 64 + x];
+                                if (x % 2 == 0)
+                                {
+                                    b = info.File.ReadBytes(1)[0];
+                                    alpha[i][(63 - y) * 64 + x] = (byte)((b & 0xF) * 17);
+                                }
+                                else
+                                {
+                                    alpha[i][(63 - y) * 64 + x] = (byte)((b >> 4) * 17);
+                                }
                             }
                         }
 
                         break;
                     case 4096:
                         throw new NotImplementedException();
-                        break;
+                        //break;
                     default:
                         throw new NotImplementedException();
-                        break;
+                        //break;
                 }
             }
 
-            DDSHeader dds = new DDSHeader()
+            DDSHeader dds = new DDSHeader
             {
                 Size = 124,
-                Flags = DDSD.Caps & DDSD.Height & DDSD.Width & DDSD.PixelFormat,
+                Flags = DDSD.Caps | DDSD.Height | DDSD.Width | DDSD.PixelFormat,
                 Caps = DDSCAPS.Texture,
                 Height = 64,
                 Width = 64,
-                PixelFormat = new DDSPixelFormat()
+                PixelFormat = new DDSPixelFormat
                 {
                     Size = 32,
                     Flags = DDPF.Rgb,
@@ -437,26 +824,26 @@ namespace adt5
             file.Write((int)Magic.DDS);
             file.Write(buffer);
 
-            /*foreach (var b in alpha2)
+            for (int i = 0; i < 64 * 64; i++)
             {
-                file.Write(new[] { b[0], b[1], b[2] });
-            }*/
+                file.Write(new[ ] { alpha[0][i], alpha[1][i], alpha[2][i] });
 
-            for (int i = 0; i < 64*64; i++)
-            {
-                file.Write(new[] { alpha2[0][i], alpha2[1][i], alpha2[2][i] });
+                //alpha2[i * 3 + 3] = byte.MaxValue;
+                alpha2[i * 3] = alpha[0][i];
+                alpha2[i * 3 + 1] = alpha[1][i];
+                alpha2[i * 3 + 2] = alpha[2][i];
             }
 
             file.Seek(0, SeekOrigin.Begin);
 
             var bytes = new BinaryReader(file.BaseStream).ReadBytes((int)file.BaseStream.Length);
-            maps[0] = new ShaderResourceView(info.Device, Resource.FromMemory<Texture2D>(info.Device, bytes));
+            maps = new ShaderResourceView(info.Device, Resource.FromMemory<Texture2D>(info.Device, bytes));
         }
 
-        private Texture2D ToTexture(Device device, float[ ] alpha)
+        /*private Texture2D ToTexture(Device device, float[ ] alpha)
         {
             return null;
-        }
+        }*/
     }
 
     internal class MCLY : AdtChunk
@@ -480,6 +867,7 @@ namespace adt5
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     internal struct MCLYLayer
     {
         public int TextureId;
@@ -499,11 +887,15 @@ namespace adt5
         public int HeightOffset;
         private int kuk;
         public int LayerOffset;
-        private int kuk2;
+        public int RefOffset;
         public int AlphaOffset;
+        public int sizeAlpha;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+        private int[] pad;
+        public int nMapObjs;
 
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
-        private int[ ] pad;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 11)]
+        private int[ ] pad2;
         private Vector3 _position;
 
         public Vector3 Position

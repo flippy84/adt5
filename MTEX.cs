@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System;
+using SharpDX.DXGI;
+using Resource = SharpDX.Direct3D11.Resource;
 
 namespace adt5
 {
@@ -64,10 +66,10 @@ namespace adt5
         public DDPF Flags;
         public Magic FourCC;
         public int RGBBitCount;
-        public int RBitMask;
-        public int GBitMask;
-        public int BBitMask;
-        public int ABitMask;
+        public uint RBitMask;
+        public uint GBitMask;
+        public uint BBitMask;
+        public uint ABitMask;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -90,6 +92,15 @@ namespace adt5
         public int Caps3;
         public int Caps4;
         private int Reserved2;
+    }
+
+    internal struct DDSHeaderDXT10
+    {
+        public Format DXGiFormat;
+        public ResourceDimension ResourceDimension;
+        public uint MiscFlag;
+        public uint ArraySize;
+        public uint MiscFlags2;
     }
 
     class BLP
@@ -124,7 +135,7 @@ namespace adt5
             var header = new DDSHeader
             {
                 Size = 124,
-                Flags = DDSD.Caps & DDSD.Height & DDSD.Width & DDSD.PixelFormat,
+                Flags = DDSD.Caps | DDSD.Height | DDSD.Width | DDSD.PixelFormat,
                 Caps = DDSCAPS.Texture,
                 Height = _height,
                 Width = _width,
@@ -154,6 +165,7 @@ namespace adt5
     {
         DDS = 0x20534444,
         DXT1 = 0x31545844,
+        DX10 = 0x30315844
     }
 
     [Flags]
@@ -162,6 +174,7 @@ namespace adt5
         Caps = 0x1,
         Height = 0x2,
         Width = 0x4,
+        Pitch = 0x8,
         Rgb = 0x40,
         PixelFormat = 0x1000
     };
@@ -175,6 +188,7 @@ namespace adt5
     [Flags]
     enum DDPF
     {
+        AlphaPixels = 0x1,
         FourCC = 0x4,
         Rgb = 0x40
     }

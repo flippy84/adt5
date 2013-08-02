@@ -14,8 +14,8 @@ struct PS_IN
 
 float4x4 worldViewProj;
 SamplerState pictureSampler;
+
 Texture2D layer[5];
-int layers;
 
 PS_IN VS( VS_IN input )
 {
@@ -47,5 +47,6 @@ float4 PS( PS_IN input ) : SV_Target
 	ret = lerp(ret, color[1], color[4][2]);
 	ret = lerp(ret, color[2], color[4][1]);
 
+	//return color[1];
 	return ret;
 }

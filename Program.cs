@@ -50,6 +50,7 @@ namespace adt5
             var form = new RenderForm("Adt5")
             {
                 Icon = SystemIcons.Application,
+                WindowState = FormWindowState.Maximized
             };
 
             var desc = new SwapChainDescription
@@ -77,28 +78,31 @@ namespace adt5
 
             #region Shaders
 
-            var shaders = new[ ]
+            var shaders = new[]
             {
-                new Shader(device, "Color.fx", new[ ]
+                new Shader(device, "Color.fx", new[]
                 {
                     new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 0),
                     new InputElement("COLOR", 0, Format.R32G32B32A32_Float, 16, 0)
                 }),
-                new Shader(device, "Texture.fx", new[ ]
+                new Shader(device, "Texture.fx", new[]
                 {
                     new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 0),
                     new InputElement("TEXCOORD", 0, Format.R32G32_Float, 16, 0),
                     new InputElement("TEXCOORD", 1, Format.R32G32_Float, 24, 0)
+                }),
+                new Shader(device, "Color.fx", new[]
+                {
+                    new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 1),
+                    new InputElement("COLOR", 0, Format.R32G32B32A32_Float, 16, 1)
                 })
             };
 
             #endregion
 
-
             context.InputAssembler.InputLayout = shaders[1].Layout;
             context.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(vertices, Utilities.SizeOf<Vector4>() * 2, 0));
-            //context.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(vertices, Utilities.SizeOf<Vector4>() + Utilities.SizeOf<Vector2>()*2, 0));
-            context.InputAssembler.SetIndexBuffer(indices, Format.R32_SInt, 0);
+            //context.InputAssembler.SetIndexBuffer(indices, Format.R32_SInt, 0);
             context.InputAssembler.PrimitiveTopology = PrimitiveTopology.TriangleList;
             context.VertexShader.SetConstantBuffer(0, constantBuffer);
             context.VertexShader.Set(shaders[1].VertexShader);
@@ -117,26 +121,52 @@ namespace adt5
             int pitch = 230;
             int yaw = 210;
             float distance = 400;
+            bool textured = true;
 
             form.KeyDown += (target, arg) =>
             {
-                if (arg.KeyCode == Keys.Up)
-                    yaw += 5;
-
-                if (arg.KeyCode == Keys.Down)
-                    yaw -= 5;
-
-                if (arg.KeyCode == Keys.Left)
-                    pitch += 5;
-
-                if (arg.KeyCode == Keys.Right)
-                    pitch -= 5;
-
-                if (arg.KeyCode == Keys.PageDown)
-                    distance += 10;
-
-                if (arg.KeyCode == Keys.PageUp)
-                    distance -= 10;
+                switch (arg.KeyCode)
+                {
+                    case Keys.Up:
+                        yaw += 5;
+                        break;
+                    case Keys.Down:
+                        yaw -= 5;
+                        break;
+                    case Keys.Left:
+                        pitch += 5;
+                        break;
+                    case Keys.Right:
+                        pitch -= 5;
+                        break;
+                    case Keys.PageDown:
+                        distance += 10;
+                        break;
+                    case Keys.PageUp:
+                        distance -= 10;
+                        break;
+                    case Keys.F2:
+                        if (textured)
+                        {
+                            context.MapSubresource(vertices, MapMode.WriteNoOverwrite, MapFlags.None, out vertexStream);
+                            vertexStream.WriteRange(adt.TerrainVertices);
+                            context.UnmapSubresource(vertices, 0);
+                        }
+                        else
+                        {
+                            context.MapSubresource(vertices, MapMode.WriteNoOverwrite, MapFlags.None, out vertexStream);
+                            vertexStream.WriteRange(adt.TerrainVerticesTextured);
+                            context.UnmapSubresource(vertices, 0);
+                        }
+                        textured = !textured;
+                        break;
+                    case Keys.F3:
+                        var fillmode = context.Rasterizer.State.Description.FillMode == FillMode.Solid ? FillMode.Wireframe : FillMode.Solid;
+                        var tmp = context.Rasterizer.State.Description;
+                        tmp.FillMode = fillmode;
+                        context.Rasterizer.State = new RasterizerState(device, tmp);
+                        break;
+                }
 
                 distance = MathUtil.Clamp(distance, 100, 400);
 
@@ -158,23 +188,21 @@ namespace adt5
             var resized = true;
             var proj = Matrix.Identity;
 
-            form.UserResized += (target, arg) => resized = true;
-
-            var sampler = new SamplerState(device, new SamplerStateDescription()
+            context.Rasterizer.State = new RasterizerState(device, new RasterizerStateDescription
             {
-                Filter = Filter.MinMagMipLinear,
-                AddressU = TextureAddressMode.Wrap,
-                AddressV = TextureAddressMode.Wrap,
-                AddressW = TextureAddressMode.Wrap,
-                BorderColor = Color.Red,
-                ComparisonFunction = Comparison.Never,
-                MaximumAnisotropy = 16,
-                MipLodBias = 0,
-                MinimumLod = 0,
-                MaximumLod = 0,
+                CullMode = CullMode.Back,
+                DepthBias = 1,
+                DepthBiasClamp = 10,
+                FillMode = FillMode.Wireframe,
+                IsAntialiasedLineEnabled = false,
+                IsDepthClipEnabled = true,
+                IsFrontCounterClockwise = false,
+                IsMultisampleEnabled = false,
+                IsScissorEnabled = false,
+                SlopeScaledDepthBias = 0
             });
 
-            context.PixelShader.SetSampler(0, sampler);
+            form.UserResized += (target, arg) => resized = true;
 
             RenderLoop.Run(form, () =>
             {
@@ -189,13 +217,12 @@ namespace adt5
                     backBuffer = Resource.FromSwapChain<Texture2D>(swapChain, 0);
 
                     renderView = new RenderTargetView(device, backBuffer);
-                    context.OutputMerger.SetTargets(renderView);
 
                     depthBuffer = new Texture2D(device, new Texture2DDescription
                     {
                         Format = Format.D32_Float_S8X24_UInt,
                         ArraySize = 1,
-                        MipLevels = 1,
+                        MipLevels = 0,
                         Width = form.ClientSize.Width,
                         Height = form.ClientSize.Height,
                         SampleDescription = new SampleDescription(1, 0),
@@ -208,6 +235,8 @@ namespace adt5
                     depthView = new DepthStencilView(device, depthBuffer);
                     context.Rasterizer.SetViewports(new Viewport(0, 0, form.ClientSize.Width, form.ClientSize.Height));
                     proj = Matrix.PerspectiveFovLH((float)Math.PI / 2.0f, form.ClientSize.Width / (float)form.ClientSize.Height, 0.1f, 1000.0f);
+
+                    context.OutputMerger.SetTargets(depthView, renderView);
 
                     resized = false;
                 }
@@ -232,20 +261,36 @@ namespace adt5
                 context.ClearRenderTargetView(renderView, Color4.Black);
                 context.ClearDepthStencilView(depthView, DepthStencilClearFlags.Depth, 1.0f, 0);
 
+
+                if (textured)
+                {
+                    context.InputAssembler.InputLayout = shaders[1].Layout;
+                    context.VertexShader.Set(shaders[1].VertexShader);
+                    context.PixelShader.Set(shaders[1].PixelShader);
+                }
+                else
+                {
+                    context.InputAssembler.InputLayout = shaders[0].Layout;
+                    context.VertexShader.Set(shaders[0].VertexShader);
+                    context.PixelShader.Set(shaders[0].PixelShader);
+                }
+
                 foreach (var tile in adt.hora.Mcnk)
                 {
                     tile.Render(device);
                 }
 
-                /*for (int y = 6; y < 9; y++)
+                //Models
+
+                context.InputAssembler.InputLayout = shaders[2].Layout;
+                context.VertexShader.Set(shaders[2].VertexShader);
+                context.PixelShader.Set(shaders[2].PixelShader);
+
+                foreach (var model in adt.hora.adtmodels)
                 {
-                    for (int x = 6; x < 9; x++)
-                    {
-                        adt.hora.Mcnk[x, y].Render(device);
-                    }
-                }*/
-                
-                //context.Draw(196608, 0);
+                    model.Render(device);
+                }
+
                 swapChain.Present(0, PresentFlags.None);
             });
         }
