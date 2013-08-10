@@ -112,11 +112,10 @@ namespace adt5
     class Model
     {
         private static Buffer _vertexBuffer;
-        private Device _device;
+        private static Buffer _indexBuffer;
         private int index;
         private int count;
         private static long vertexOffset;
-        private Vector4[] kukVertices;
 
         public Model(Device device, Vector4[] vertices)
         {
@@ -125,6 +124,9 @@ namespace adt5
             {
                 _vertexBuffer = new Buffer(device, Utilities.SizeOf<Vector4>() * 2 * 100000, ResourceUsage.Dynamic, BindFlags.VertexBuffer, CpuAccessFlags.Write, ResourceOptionFlags.None, Utilities.SizeOf<Vector4>() * 2);
                 context.InputAssembler.SetVertexBuffers(1, new VertexBufferBinding(_vertexBuffer, Utilities.SizeOf<Vector4>() * 2, 0));
+
+                _indexBuffer = new Buffer(device, Utilities.SizeOf<short>(), ResourceUsage.Dynamic, BindFlags.IndexBuffer, CpuAccessFlags.Write, ResourceOptionFlags.None, Utilities.SizeOf<short>());
+                context.InputAssembler.SetIndexBuffer(_indexBuffer, Format.R16_UInt, 0);
             }
 
             DataStream stream;
@@ -151,8 +153,24 @@ namespace adt5
 
         public static Vector4[] Parse(string s, Vector3 position, Vector3 rotation, float scale)
         {
+            float d = (float)(Math.PI / 180);
+
+            Matrix m = Matrix.Identity;
+            m *= Matrix.RotationX(rotation.X * d);
+            m *= Matrix.RotationY(-rotation.Y * d);
+            m *= Matrix.RotationZ(rotation.Z * d);
+
+            return Parse(s, position, m, scale);
+        }
+
+        public static Vector4[] Parse(string s, Vector3 position, Matrix rotation, float scale)
+        {
             var vertices = new List<Vector4>();
-            var color = new Color4(1, 0, 0, 1);
+            var color = new[]
+            {
+                new Color4(1, 0, 0, 1),
+                new Color4(.8f, 0, 0, 1)
+            };
 
             var file = new MpqFile(MpqArchive.Open(s));
             var header = file.ReadStruct<M2Header>();
@@ -179,10 +197,7 @@ namespace adt5
             float[] tmp = new float[3];
 
             var m = Matrix.Identity;
-            float d = (float)(Math.PI / 180);
-            m *= Matrix.RotationX(rotation.X * d);
-            m *= Matrix.RotationY(-rotation.Y * d);
-            m *= Matrix.RotationZ(rotation.Z * d);
+            m *= rotation;
             m *= Matrix.Scaling(scale);
             m *= Matrix.Translation(position);
 
@@ -202,9 +217,9 @@ namespace adt5
             {
                 vertices.AddRange(new[]
                 {
-                    vertices2[indices[i + 2]], color.ToVector4(),
-                    vertices2[indices[i + 1]], color.ToVector4(),
-                    vertices2[indices[i]], color.ToVector4(),
+                    vertices2[indices[i + 2]], color[i / 3 % 2].ToVector4(),
+                    vertices2[indices[i + 1]], color[i / 3 % 2].ToVector4(),
+                    vertices2[indices[i]], color[i / 3 % 2].ToVector4(),
                 });
             }
 
@@ -238,6 +253,7 @@ namespace adt5
         public MCNK[,] Mcnk = new MCNK[16,16];
         private AdtInfo _info;
         public List<Model> adtmodels = new List<Model>();
+        public List<Wmo> wmo_models = new List<Wmo>(); 
 
         private byte[,] alphamap = new byte[8,64 * 64 * 16 * 16];
 
@@ -386,6 +402,75 @@ namespace adt5
                     continue;
                 adtmodels.Add(new Model(device, vertices));
             }
+
+            var wmos = new MODF(GetChunkPosition("MODF"), _info);
+
+            _info.File.Seek(GetChunkPosition("MWMO"), SeekOrigin.Begin);
+            header = _info.File.ReadStruct<ChunkHeader>();
+            files = _info.File.ReadString(header.Size - 1).Split(new[] { '\0' });
+
+            foreach (var wmo in _info.Wmos)
+            {
+                var kuk = wmos[wmo];
+                var vertices = Wmo.Parse(files[wmo], kuk.Position, kuk.Rotation);
+                if (vertices.Any() == false)
+                    continue;
+                wmo_models.Add(new Wmo(device, vertices));
+            }
+        }
+
+        class MODF : AdtChunk
+        {
+            private MODFEntry[] _entries;
+            public MODF(long position, AdtInfo info) : base(position, info)
+            {
+                info.File.Seek(position, SeekOrigin.Begin);
+
+                var header = info.File.ReadStruct<ChunkHeader>();
+                var num = header.Size / Utilities.SizeOf<MODFEntry>();
+
+                _entries = new MODFEntry[num];
+
+                for (int i = 0; i < num; i++)
+                {
+                    _entries[i] = info.File.ReadStruct<MODFEntry>();
+                }
+            }
+
+            public MODFEntry this[int i]
+            {
+                get { return _entries[i]; }
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct MODFEntry
+        {
+            private int mwidEntry;
+            private int uniqueId;
+            private Vector3 _position;
+            private Vector3 _rotation;
+            private Vector3 lowerBounds;
+            private Vector3 upperBounds;
+            private short flags;
+            private short doodadSet;
+            private short nameSet;
+            private short padding;
+
+            public Vector3 Position
+            {
+                get
+                {
+                    float d = 1600 * 32 / 3f;
+                    Vector3 v = new Vector3(_position.X - d, _position.Y, -(_position.Z - d));
+                    return v;
+                }
+            }
+
+            public Vector3 Rotation
+            {
+                get { return _rotation; }
+            }
         }
 
         public long GetChunkPosition(string id)
@@ -406,6 +491,170 @@ namespace adt5
             }
 
             return 0;
+        }
+    }
+
+    public class Wmo
+    {
+        private static Buffer _vertexBuffer;
+        private int count;
+        private int index;
+        private static long vertexOffset;
+
+        public Wmo(Device device, Vector4[] vertices)
+        {
+            var context = device.ImmediateContext;
+            if (_vertexBuffer == null)
+            {
+                _vertexBuffer = new Buffer(device, Utilities.SizeOf<Vector4>() * 2 * 10000000, ResourceUsage.Dynamic, BindFlags.VertexBuffer, CpuAccessFlags.Write, ResourceOptionFlags.None, Utilities.SizeOf<Vector4>() * 2);
+                context.InputAssembler.SetVertexBuffers(2, new VertexBufferBinding(_vertexBuffer, Utilities.SizeOf<Vector4>() * 2, 0));
+            }
+
+            DataStream stream;
+            context.MapSubresource(_vertexBuffer, MapMode.WriteNoOverwrite, MapFlags.None, out stream);
+
+            stream.Seek(vertexOffset, SeekOrigin.Begin);
+
+            count = vertices.Length / 2;
+            index = (int)stream.Position / 32;
+
+            stream.WriteRange(vertices);
+
+            vertexOffset = stream.Position;
+
+            context.UnmapSubresource(_vertexBuffer, 0);
+        }
+
+        public void Render(Device device)
+        {
+            var context = device.ImmediateContext;
+
+            context.Draw(count, index);
+        }
+
+        public static Vector4[] Parse(string s, Vector3 position, Vector3 rotation)
+        {
+            List<Vector4> vertices = new List<Vector4>();
+
+            var kuk = new RootWmo(s);
+            foreach (string hej in kuk.GroupFiles)
+            {
+                vertices.AddRange(GroupWmo.Parse(hej, position, rotation));
+            }
+
+            return vertices.ToArray();
+        }
+
+        private class RootWmo
+        {
+            public string[] GroupFiles;
+
+            public RootWmo(string s)
+            {
+                var file = new MpqFile(MpqArchive.Open(s));
+                file.Seek(file.GetChunkPosition("MOHD"), SeekOrigin.Begin);
+                var header = file.ReadStruct<ChunkHeader>();
+                var mohd = file.ReadStruct<MOHD>();
+
+                var root = s.Split(new[] { '.' })[0];
+
+                GroupFiles = new string[mohd.nGroups];
+                for (int i = 0; i < mohd.nGroups; i++)
+                {
+                    GroupFiles[i] = string.Format("{0}_{1:000}.WMO", root, i);
+                }
+
+                /*foreach (var group in GroupFiles)
+                {
+                    GroupWmo.Parse(group);
+                }*/
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MOHD
+        {
+            private int nMaterials;
+            public int nGroups;
+            private int nPortals;
+            private int nLights;
+            private int nModels;
+            private int nDoodads;
+            private int nSets;
+            private int ambient_color;
+            private int WMO_ID;
+            public Vector3 upperBounds;
+            public Vector3 lowerBounds;
+            private int unknown;
+        }
+
+        private class GroupWmo
+        {
+            /*public GroupWmo(string s)
+            {
+
+            }*/
+
+            public static Vector4[] Parse(string s, Vector3 position, Vector3 rotation)
+            {
+                List<Vector4> vertices = new List<Vector4>();
+                var color = new[]
+                {
+                    new Color4(1, 1, 0, 1),
+                    new Color4(.8f, .8f, 0, 1)
+                };
+                var file = new MpqFile(MpqArchive.Open(s));
+
+                var offset = file.GetChunkPosition("MOGP");
+                offset += 0x4C;
+                file.Seek(file.GetChunkPosition("MOVT", offset), SeekOrigin.Begin);
+                var header = file.ReadStruct<ChunkHeader>();
+
+                var num = header.Size / Vector3.SizeInBytes;
+                float[] tmp = new float[3];
+                Vector4[] vertices2 = new Vector4[num];
+
+                for (int i = 0; i < num; i++)
+                {
+                    tmp[0] = file.ReadSingle();
+                    tmp[1] = file.ReadSingle();
+                    tmp[2] = file.ReadSingle();
+
+                    vertices2[i] = new Vector4(tmp[1], tmp[2], -tmp[0], 1);
+                }
+
+                Matrix m = Matrix.Identity;
+                float d = (float)(Math.PI / 180);
+                m *= Matrix.RotationX(rotation.X * d);
+                m *= Matrix.RotationY(-rotation.Y * d);
+                m *= Matrix.RotationZ(rotation.Z * d);
+                m *= Matrix.Translation(position);
+
+                Vector4.Transform(vertices2, ref m, vertices2);
+
+                file.Seek(file.GetChunkPosition("MOVI", offset), SeekOrigin.Begin);
+                header = file.ReadStruct<ChunkHeader>();
+                num = header.Size / sizeof(short);
+
+                short[] indices = new short[num];
+
+                for (int i = 0; i < num; i++)
+                {
+                    indices[i] = file.ReadInt16();
+                }
+
+                for (int i = 0; i < num; i += 3)
+                {
+                    vertices.AddRange(new[]
+                    {
+                        vertices2[indices[i + 2]], color[i / 3 % 2].ToVector4(),
+                        vertices2[indices[i + 1]], color[i / 3 % 2].ToVector4(),
+                        vertices2[indices[i]], color[i / 3 % 2].ToVector4()
+                    });
+                }
+
+                return vertices.ToArray();
+            }
         }
     }
 
@@ -431,12 +680,12 @@ namespace adt5
 
         public int Count { get; private set; }
 
-        #region Enumerator
-
         public MDDFEntry this[int i]
         {
             get { return _entries[i]; }
         }
+
+        #region Enumerator
 
         IEnumerator IEnumerable.GetEnumerator()
         {
@@ -532,6 +781,7 @@ namespace adt5
         private Vector4 color2 = new Vector4(0f, .5f, 0f, 1f);
         private ShaderResourceView[ ] _textures;
         public MCLY mcly;
+        private int vertexCount;
 
         public int StartIndex { get; set; }
 
@@ -545,7 +795,7 @@ namespace adt5
             /*if(_hasAlphaMap)
                 device.ImmediateContext.PixelShader.SetShaderResource(4, mcal.maps);*/
 
-            device.ImmediateContext.Draw(768, StartIndex);
+            device.ImmediateContext.Draw(vertexCount, StartIndex);
         }
 
         const float step = 0.0625f;
@@ -557,11 +807,17 @@ namespace adt5
             get
             {
                 var vertices = new List<Vector4>();
+                var holes = mcnkInfo.Holes;
 
                 for (var y = 0; y < 8; y++)
                 {
                     for (var x = 0; x < 8; x++)
                     {
+                        if ((holes >> (y * 8 + x) & 1) == 1)
+                        {
+                            continue;
+                        }
+
                         vertices.AddRange(new[ ]
                         {
                             new Vector4(_outerPosition[x + 1, y], 1), new Vector4(1, 0, _outerUV[x + 1, y].X, _outerUV[x + 1, y].Y),
@@ -583,6 +839,17 @@ namespace adt5
                     }
                 }
 
+                vertexCount = vertices.Count / 2;
+
+                if (vertexCount < 768)
+                {
+                    for (int i = 0; i < 768 - vertexCount; i++)
+                    {
+                        vertices.Add(Vector4.Zero);
+                        vertices.Add(Vector4.Zero);
+                    }
+                }
+
                 return vertices.ToArray();
             }
         }
@@ -592,11 +859,17 @@ namespace adt5
             get
             {
                 var vertices = new List<Vector4>();
+                var holes = mcnkInfo.Holes;
 
                 for (var y = 0; y < 8; y++)
                 {
                     for (var x = 0; x < 8; x++)
                     {
+                        if ((holes >> (y * 8 + x) & 1) == 1)
+                        {
+                            continue;
+                        }
+
                         vertices.AddRange(new[ ]
                         {
                             new Vector4(_outerPosition[x + 1, y], 1f), color,
@@ -616,6 +889,17 @@ namespace adt5
                             new Vector4(_outerPosition[x, y + 1], 1f), color2,
                             new Vector4(_middlePosition[x, y], 1f), color2
                         });
+                    }
+                }
+
+                vertexCount = vertices.Count / 2;
+
+                if (vertexCount < 768)
+                {
+                    for (int i = 0; i < 768 - vertexCount; i++)
+                    {
+                        vertices.Add(Vector4.Zero);
+                        vertices.Add(Vector4.Zero);
                     }
                 }
 
@@ -893,14 +1177,36 @@ namespace adt5
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
         private int[] pad;
         public int nMapObjs;
+        private int _holes;
 
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 11)]
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 10)]
         private int[ ] pad2;
         private Vector3 _position;
 
         public Vector3 Position
         {
             get { return new Vector3(-_position.Y, _position.Z, _position.X); }
+        }
+
+        public ulong Holes
+        {
+            get
+            {
+                ulong ret = 0;
+                var holes = (ushort) (_holes & 0xFFFF);
+                for (int y = 0; y < 4; y++)
+                {
+                    for (int x = 0; x < 4; x++)
+                    {
+                        if ((holes >> (y * 4 + x) & 1) == 1)
+                        {
+                            ret |= (ulong) 3 << ((3 - y) * 16 + x * 2);
+                            ret |= (ulong) 3 << ((3 - y) * 16 + 8 + x * 2);
+                        }
+                    }
+                }
+                return ret;
+            }
         }
     }
 

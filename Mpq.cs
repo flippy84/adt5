@@ -1,6 +1,8 @@
 ﻿using System.IO;
 using System;
+using System.Linq;
 using System.Runtime.InteropServices;
+using SharpDX.Toolkit.Content;
 
 namespace adt5
 {
@@ -84,6 +86,31 @@ namespace adt5
             handle.Free();
 
             return ret;
+        }
+
+        public long GetChunkPosition(string id, long start)
+        {
+            Seek(start, SeekOrigin.Begin);
+            var fcc = id.ToArray().Reverse();
+
+            while (true)
+            {
+                var header = ReadStruct<ChunkHeader>();
+                if (header.Size == 0)
+                    break;
+
+                if (header.Id.SequenceEqual(fcc))
+                    return Position - 8;
+
+                Seek(header.Size, SeekOrigin.Current);
+            }
+            throw new Exception();
+            return -1;
+        }
+
+        public long GetChunkPosition(string id)
+        {
+            return GetChunkPosition(id, 0);
         }
 
         public long Position

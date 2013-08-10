@@ -95,6 +95,11 @@ namespace adt5
                 {
                     new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 1),
                     new InputElement("COLOR", 0, Format.R32G32B32A32_Float, 16, 1)
+                }),
+                new Shader(device, "Color.fx", new[]
+                {
+                    new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 2),
+                    new InputElement("COLOR", 0, Format.R32G32B32A32_Float, 16, 2)
                 })
             };
 
@@ -287,6 +292,17 @@ namespace adt5
                 context.PixelShader.Set(shaders[2].PixelShader);
 
                 foreach (var model in adt.hora.adtmodels)
+                {
+                    model.Render(device);
+                }
+
+                //Wmo
+
+                context.InputAssembler.InputLayout = shaders[3].Layout;
+                context.VertexShader.Set(shaders[3].VertexShader);
+                context.PixelShader.Set(shaders[3].PixelShader);
+
+                foreach (var model in adt.hora.wmo_models)
                 {
                     model.Render(device);
                 }
