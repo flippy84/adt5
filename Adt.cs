@@ -35,7 +35,7 @@ namespace adt5
             {
                 var vertices = new List<Vector4>();
 
-                foreach (var mcnk in hora.Mcnk)
+                foreach (var mcnk in hora._info.MapChunks)
                 {
                     vertices.AddRange(mcnk.TerrainVertices);
                 }
@@ -50,7 +50,7 @@ namespace adt5
             {
                 var vertices = new List<Vector4>();
 
-                foreach (var mcnk in hora.Mcnk)
+                foreach (var mcnk in hora._info.MapChunks)
                 {
                     vertices.AddRange(mcnk.TerrainVerticesTextured);
                 }
@@ -107,6 +107,7 @@ namespace adt5
         public ShaderResourceView[] Textures;
         public List<int> Doodads;
         public List<int> Wmos;
+        public MCNK[,] MapChunks;
     }
 
     class Model
@@ -250,10 +251,10 @@ namespace adt5
     internal class AdtFile
     {
         public MpqFile File;
-        public MCNK[,] Mcnk = new MCNK[16,16];
-        private AdtInfo _info;
+        public AdtInfo _info;
         public List<Model> adtmodels = new List<Model>();
-        public List<Wmo> wmo_models = new List<Wmo>(); 
+        public List<Wmo> wmo_models = new List<Wmo>();
+        public int waterverticescount;
 
         private byte[,] alphamap = new byte[8,64 * 64 * 16 * 16];
 
@@ -334,13 +335,14 @@ namespace adt5
 
             var mcin = new MCIN(GetChunkPosition("MCIN"), _info);
 
-            byte[ ] alpha = new byte[4096 * 3 * 16 * 16];
+            byte[] alpha = new byte[4096 * 3 * 16 * 16];
+            _info.MapChunks = new MCNK[16,16];
 
             for (int y = 0; y < 16; y++)
             {
                 for (int x = 0; x < 16; x++)
                 {
-                    Mcnk[x, y] = mcin[x, y];
+                    _info.MapChunks[x, y] = mcin[x, y];
                 }
             }
 
@@ -348,7 +350,7 @@ namespace adt5
             {
                 for (int x = 0; x < 16; x++)
                 {
-                    var kuk = Mcnk[x, 15 - (y / 64)].mcal.alpha2;
+                    var kuk = _info.MapChunks[x, 15 - (y / 64)].mcal.alpha2;
                     Array.Copy(kuk, (y % 64) * 64 * 3, alpha, (y * 1024 + x * 64) * 3, 64 * 3);
                 }
             }
@@ -357,10 +359,10 @@ namespace adt5
             {
                 for (int x = 0; x < 16; x++)
                 {
-                    for (int i = 1; i < Mcnk[x,y].mcly.NumLayers; i++)
+                    for (int i = 1; i < _info.MapChunks[x, y].mcly.NumLayers; i++)
                     {
-                        var index = Mcnk[x, y].mcly.Layers[i].TextureId;
-                        var kuk = Mcnk[x, y].mcal.alpha[i - 1];
+                        var index = _info.MapChunks[x, y].mcly.Layers[i].TextureId;
+                        var kuk = _info.MapChunks[x, y].mcal.alpha[i - 1];
                     }
                 }
             }
@@ -417,6 +419,58 @@ namespace adt5
                     continue;
                 wmo_models.Add(new Wmo(device, vertices));
             }
+
+            //Water
+
+            var mh2o = new MH2O(GetChunkPosition("MH2O"), _info);
+
+            for (int y = 0; y < 16; y++)
+                for (int x = 0; x < 16; x++)
+                    _info.MapChunks[x, y].LiquidInfo = mh2o.chunks[y * 16 + x];
+
+            List<Vector4> watervertices = new List<Vector4>();
+            Vector4 blue = new Vector4(0, 0, 1, 1);
+
+            for (int chunkY = 0; chunkY < 16; chunkY++)
+            {
+                for (int chunkX = 0; chunkX < 16; chunkX++)
+                {
+                    //_info.MapChunks[x, y].LiquidInfo.Heights[0];
+
+                    var chunk = _info.MapChunks[chunkX, chunkY];
+                    if(chunk.LiquidInfo.LayerCount == 0)
+                        continue;
+
+                    for (int y = chunk.LiquidInfo.Y; y < chunk.LiquidInfo.Y + chunk.LiquidInfo.Height; y++)
+                    {
+                        for (int x = chunk.LiquidInfo.X; x < chunk.LiquidInfo.X + chunk.LiquidInfo.Width; x++)
+                        {
+                            watervertices.AddRange(new[]
+                            {
+                                new Vector4(chunk.OuterPositions[x + 1, y + 1].X, chunk.LiquidInfo.Heights[x, y], chunk.OuterPositions[x + 1, y + 1].Z, 1), blue,
+                                new Vector4(chunk.OuterPositions[x + 1, y].X, chunk.LiquidInfo.Heights[x, y], chunk.OuterPositions[x + 1, y].Z, 1), blue,
+                                new Vector4(chunk.OuterPositions[x, y].X, chunk.LiquidInfo.Heights[x, y], chunk.OuterPositions[x, y].Z, 1), blue,
+                                new Vector4(chunk.OuterPositions[x, y + 1].X, chunk.LiquidInfo.Heights[x, y], chunk.OuterPositions[x, y + 1].Z, 1), blue,
+                                new Vector4(chunk.OuterPositions[x + 1, y + 1].X, chunk.LiquidInfo.Heights[x, y], chunk.OuterPositions[x + 1, y + 1].Z, 1), blue,
+                                new Vector4(chunk.OuterPositions[x, y].X, chunk.LiquidInfo.Heights[x, y], chunk.OuterPositions[x, y].Z, 1), blue
+                            });
+                        }
+                    }
+                }
+            }
+
+            Buffer water = new Buffer(device, 1000000 * Utilities.SizeOf<Vector4>() * 2, ResourceUsage.Dynamic, BindFlags.VertexBuffer, CpuAccessFlags.Write, ResourceOptionFlags.None, Utilities.SizeOf<Vector4>() * 2);
+            DataStream stream;
+            device.ImmediateContext.MapSubresource(water, MapMode.WriteNoOverwrite, MapFlags.None, out stream);
+
+            stream.WriteRange(watervertices.ToArray());
+
+            device.ImmediateContext.UnmapSubresource(water, 0);
+
+            device.ImmediateContext.InputAssembler.SetVertexBuffers(3, new VertexBufferBinding(water, Utilities.SizeOf<Vector4>() * 2, 0));
+
+            waterverticescount = watervertices.Count / 2;
+
         }
 
         class MODF : AdtChunk
@@ -775,13 +829,13 @@ namespace adt5
 
     internal class MCNK : AdtChunk
     {
-        //public MCNK() { }
-
         private Vector4 color = new Vector4(0f, 1f, 0f, 1f);
         private Vector4 color2 = new Vector4(0f, .5f, 0f, 1f);
         private ShaderResourceView[ ] _textures;
         public MCLY mcly;
         private int vertexCount;
+        //public MH2O water;
+        public MH2OBlock LiquidInfo;
 
         public int StartIndex { get; set; }
 
@@ -820,21 +874,21 @@ namespace adt5
 
                         vertices.AddRange(new[ ]
                         {
-                            new Vector4(_outerPosition[x + 1, y], 1), new Vector4(1, 0, _outerUV[x + 1, y].X, _outerUV[x + 1, y].Y),
-                            new Vector4(_outerPosition[x, y], 1), new Vector4(0, 0, _outerUV[x, y].X, _outerUV[x, y].Y),
-                            new Vector4(_middlePosition[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y),
+                            new Vector4(OuterPositions[x + 1, y], 1), new Vector4(1, 0, _outerUV[x + 1, y].X, _outerUV[x + 1, y].Y),
+                            new Vector4(OuterPositions[x, y], 1), new Vector4(0, 0, _outerUV[x, y].X, _outerUV[x, y].Y),
+                            new Vector4(MiddlePositions[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y),
 
-                            new Vector4(_outerPosition[x + 1, y + 1], 1), new Vector4(1, 1, _outerUV[x + 1, y + 1].X, _outerUV[x + 1, y + 1].Y),
-                            new Vector4(_outerPosition[x + 1, y], 1), new Vector4(1, 0, _outerUV[x + 1, y].X, _outerUV[x + 1, y].Y),
-                            new Vector4(_middlePosition[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y),
+                            new Vector4(OuterPositions[x + 1, y + 1], 1), new Vector4(1, 1, _outerUV[x + 1, y + 1].X, _outerUV[x + 1, y + 1].Y),
+                            new Vector4(OuterPositions[x + 1, y], 1), new Vector4(1, 0, _outerUV[x + 1, y].X, _outerUV[x + 1, y].Y),
+                            new Vector4(MiddlePositions[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y),
 
-                            new Vector4(_outerPosition[x, y + 1], 1), new Vector4(0, 1, _outerUV[x, y + 1].X, _outerUV[x, y + 1].Y),
-                            new Vector4(_outerPosition[x + 1, y + 1], 1), new Vector4(1, 1, _outerUV[x + 1, y + 1].X, _outerUV[x + 1, y + 1].Y),
-                            new Vector4(_middlePosition[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y),
+                            new Vector4(OuterPositions[x, y + 1], 1), new Vector4(0, 1, _outerUV[x, y + 1].X, _outerUV[x, y + 1].Y),
+                            new Vector4(OuterPositions[x + 1, y + 1], 1), new Vector4(1, 1, _outerUV[x + 1, y + 1].X, _outerUV[x + 1, y + 1].Y),
+                            new Vector4(MiddlePositions[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y),
 
-                            new Vector4(_outerPosition[x, y], 1), new Vector4(0, 0, _outerUV[x, y].X, _outerUV[x, y].Y),
-                            new Vector4(_outerPosition[x, y + 1], 1), new Vector4(0, 1, _outerUV[x, y + 1].X, _outerUV[x, y + 1].Y),
-                            new Vector4(_middlePosition[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y)
+                            new Vector4(OuterPositions[x, y], 1), new Vector4(0, 0, _outerUV[x, y].X, _outerUV[x, y].Y),
+                            new Vector4(OuterPositions[x, y + 1], 1), new Vector4(0, 1, _outerUV[x, y + 1].X, _outerUV[x, y + 1].Y),
+                            new Vector4(MiddlePositions[x, y], 1), new Vector4(.5f, .5f, _middleUV[x, y].X, _middleUV[x, y].Y)
                         });
                     }
                 }
@@ -872,22 +926,22 @@ namespace adt5
 
                         vertices.AddRange(new[ ]
                         {
-                            new Vector4(_outerPosition[x + 1, y], 1f), color,
-                            new Vector4(_outerPosition[x, y], 1f), color,
-                            new Vector4(_middlePosition[x, y], 1f), color,
+                            new Vector4(OuterPositions[x + 1, y], 1f), color,
+                            new Vector4(OuterPositions[x, y], 1f), color,
+                            new Vector4(MiddlePositions[x, y], 1f), color,
 
-                            new Vector4(_outerPosition[x + 1, y + 1], 1f), color2,
-                            new Vector4(_outerPosition[x + 1, y], 1f), color2,
-                            new Vector4(_middlePosition[x, y], 1f), color2,
+                            new Vector4(OuterPositions[x + 1, y + 1], 1f), color2,
+                            new Vector4(OuterPositions[x + 1, y], 1f), color2,
+                            new Vector4(MiddlePositions[x, y], 1f), color2,
 
 
-                            new Vector4(_outerPosition[x, y + 1], 1f), color,
-                            new Vector4(_outerPosition[x + 1, y + 1], 1f), color,
-                            new Vector4(_middlePosition[x, y], 1f), color,
+                            new Vector4(OuterPositions[x, y + 1], 1f), color,
+                            new Vector4(OuterPositions[x + 1, y + 1], 1f), color,
+                            new Vector4(MiddlePositions[x, y], 1f), color,
 
-                            new Vector4(_outerPosition[x, y], 1f), color2,
-                            new Vector4(_outerPosition[x, y + 1], 1f), color2,
-                            new Vector4(_middlePosition[x, y], 1f), color2
+                            new Vector4(OuterPositions[x, y], 1f), color2,
+                            new Vector4(OuterPositions[x, y + 1], 1f), color2,
+                            new Vector4(MiddlePositions[x, y], 1f), color2
                         });
                     }
                 }
@@ -909,7 +963,7 @@ namespace adt5
 
         #endregion
 
-        public int[ ] TerrainIndices
+        /*public int[ ] TerrainIndices
         {
             get
             {
@@ -932,10 +986,10 @@ namespace adt5
 
                 return indices.ToArray();
             }
-        }
+        }*/
 
-        private Vector3[,] _outerPosition;
-        private Vector3[,] _middlePosition;
+        public Vector3[,] OuterPositions;
+        public Vector3[,] MiddlePositions;
 
         private Vector2[,] _outerUV;
         private Vector2[,] _middleUV;
@@ -943,6 +997,7 @@ namespace adt5
         private MCNKInfo mcnkInfo;
 
         public MCAL mcal;
+        public MCVT HeightChunk;
 
         private bool _hasAlphaMap = false;
 
@@ -951,36 +1006,36 @@ namespace adt5
         {
             info.File.Seek(offset + 8, SeekOrigin.Begin);
             mcnkInfo = info.File.ReadStruct<MCNKInfo>();
-            MCVT hora = new MCVT(mcnkInfo.HeightOffset + Position, info);
+            HeightChunk = new MCVT(mcnkInfo.HeightOffset + Position, info);
 
             //var mcrf = new MCRF(mcnkInfo.RefOffset + Position, info);
 
             mcly = new MCLY(mcnkInfo.LayerOffset + Position, info);
 
-            if (mcnkInfo.sizeAlpha - 8 != 0)
+            if (mcnkInfo.AlphaSize - 8 != 0)
             {
                 _hasAlphaMap = true;
 
                 mcal = new MCAL(mcnkInfo.AlphaOffset + Position, info, mcly.Layers);
             }
 
-            info.File.Seek(mcnkInfo.RefOffset + Position + 8, SeekOrigin.Begin);
-            for (int i = 0; i < mcnkInfo.nDoodads; i++)
+            info.File.Seek(mcnkInfo.ReferencesOffset + Position + 8, SeekOrigin.Begin);
+            for (int i = 0; i < mcnkInfo.DoodadReferencesCount; i++)
             {
                  info.Doodads.Add(info.File.ReadInt32());
             }
 
-            for (int i = 0; i < mcnkInfo.nMapObjs; i++)
+            for (int i = 0; i < mcnkInfo.MapObjReferencesCount; i++)
             {
                 info.Wmos.Add(info.File.ReadInt32());
             }
 
-            StartIndex = (mcnkInfo.X * 16 + mcnkInfo.Y) * 768;
+            StartIndex = (mcnkInfo.IndexX * 16 + mcnkInfo.IndexY) * 768;
 
             _textures = info.Textures;
 
-            _outerPosition = new Vector3[9,9];
-            _middlePosition = new Vector3[8,8];
+            OuterPositions = new Vector3[9,9];
+            MiddlePositions = new Vector3[8,8];
 
             _outerUV = new Vector2[9, 9];
             _middleUV = new Vector2[8, 8];
@@ -989,13 +1044,13 @@ namespace adt5
             {
                 for (int x = 0; x < 9; x++)
                 {
-                    _outerPosition[x, y].X = x * 25 / 6f;
-                    _outerPosition[x, y].Y = hora.Heights[(8 - y) * 17 + x];
-                    _outerPosition[x, y].Z = y * 25 / 6f - 1600 / 48f;
-                    _outerPosition[x, y] += mcnkInfo.Position;
+                    OuterPositions[x, y].X = x * 25 / 6f;
+                    OuterPositions[x, y].Y = HeightChunk.Heights[(8 - y) * 17 + x];
+                    OuterPositions[x, y].Z = y * 25 / 6f - 1600 / 48f;
+                    OuterPositions[x, y] += mcnkInfo.Position;
 
-                    _outerUV[x, y].X = x * 1 / 128f + 1 / 16f * mcnkInfo.X;
-                    _outerUV[x, y].Y = y * 1 / 128f + 1 / 16f * (15 - mcnkInfo.Y);
+                    _outerUV[x, y].X = x * 1 / 128f + 1 / 16f * mcnkInfo.IndexX;
+                    _outerUV[x, y].Y = y * 1 / 128f + 1 / 16f * (15 - mcnkInfo.IndexY);
                 }
             }
 
@@ -1003,13 +1058,13 @@ namespace adt5
             {
                 for (int x = 0; x < 8; x++)
                 {
-                    _middlePosition[x, y].X = x * 25 / 6f + 25 / 12f;
-                    _middlePosition[x, y].Y = hora.Heights[(7 - y) * 17 + 9 + x];
-                    _middlePosition[x, y].Z = y * 25 / 6f + 25 / 12f - 1600 / 48f;
-                    _middlePosition[x, y] += mcnkInfo.Position;
+                    MiddlePositions[x, y].X = x * 25 / 6f + 25 / 12f;
+                    MiddlePositions[x, y].Y = HeightChunk.Heights[(7 - y) * 17 + 9 + x];
+                    MiddlePositions[x, y].Z = y * 25 / 6f + 25 / 12f - 1600 / 48f;
+                    MiddlePositions[x, y] += mcnkInfo.Position;
 
-                    _middleUV[x, y].X = (x) * 1 / 128f + 1 / 256f + 1 / 16f * mcnkInfo.X;
-                    _middleUV[x, y].Y = (y) * 1 / 128f + 1 / 256f + 1 / 16f * (15 - mcnkInfo.Y);
+                    _middleUV[x, y].X = (x) * 1 / 128f + 1 / 256f + 1 / 16f * mcnkInfo.IndexX;
+                    _middleUV[x, y].Y = (y) * 1 / 128f + 1 / 256f + 1 / 16f * (15 - mcnkInfo.IndexY);
                 }
             }
         }
@@ -1163,21 +1218,21 @@ namespace adt5
     [StructLayout(LayoutKind.Sequential)]
     struct MCNKInfo
     {
-        public int flags;
-        public int X;
-        public int Y;
-        public int nLayers;
-        public int nDoodads;
+        public int Flags;
+        public int IndexX;
+        public int IndexY;
+        public int LayersCount;
+        public int DoodadReferencesCount;
         public int HeightOffset;
-        private int kuk;
+        public int NormalOffset;
         public int LayerOffset;
-        public int RefOffset;
+        public int ReferencesOffset;
         public int AlphaOffset;
-        public int sizeAlpha;
+        public int AlphaSize;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
-        private int[] pad;
-        public int nMapObjs;
-        private int _holes;
+        private readonly int[] _unknown;
+        public int MapObjReferencesCount;
+        private readonly int _holes;
 
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 10)]
         private int[ ] pad2;
@@ -1193,12 +1248,11 @@ namespace adt5
             get
             {
                 ulong ret = 0;
-                var holes = (ushort) (_holes & 0xFFFF);
                 for (int y = 0; y < 4; y++)
                 {
                     for (int x = 0; x < 4; x++)
                     {
-                        if ((holes >> (y * 4 + x) & 1) == 1)
+                        if ((_holes >> (y * 4 + x) & 1) == 1)
                         {
                             ret |= (ulong) 3 << ((3 - y) * 16 + x * 2);
                             ret |= (ulong) 3 << ((3 - y) * 16 + 8 + x * 2);
@@ -1240,8 +1294,9 @@ namespace adt5
     class MCIN
     {
         private long _offset;
-        private MCINInfo _info = new MCINInfo();
+        private MCINInfo2 _info = new MCINInfo2();
         private AdtInfo _adtInfo;
+        public MCINInfo[] Information;
 
         public MCIN(long offset, AdtInfo info)
         {
@@ -1250,7 +1305,14 @@ namespace adt5
 
             _adtInfo = info;
 
-            _info = info.File.ReadStruct<MCINInfo>();
+            _info = info.File.ReadStruct<MCINInfo2>();
+
+            Information = new MCINInfo[256];
+
+            for (int i = 0; i < 256; i++)
+            {
+                Information[i] = info.File.ReadStruct<MCINInfo>();
+            }
         }
 
         public MCNK this[int x, int y]
@@ -1269,10 +1331,21 @@ namespace adt5
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    struct MCINInfo
+    struct MCINInfo2
     {
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 256)]
         public MCINEntry[] Entries;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MCINInfo
+    {
+        public uint McnkOffset;
+        public uint McnkSize;
+        /*public uint Flags;
+        public uint AsyncId;*/
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
+        private readonly int[] _unused;
     }
 
     [StructLayout(LayoutKind.Sequential)]

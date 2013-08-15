@@ -100,6 +100,11 @@ namespace adt5
                 {
                     new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 2),
                     new InputElement("COLOR", 0, Format.R32G32B32A32_Float, 16, 2)
+                }),
+                new Shader(device, "Color.fx", new[]
+                {
+                    new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 3),
+                    new InputElement("COLOR", 0, Format.R32G32B32A32_Float, 16, 3)
                 })
             };
 
@@ -280,7 +285,7 @@ namespace adt5
                     context.PixelShader.Set(shaders[0].PixelShader);
                 }
 
-                foreach (var tile in adt.hora.Mcnk)
+                foreach (var tile in adt.hora._info.MapChunks)
                 {
                     tile.Render(device);
                 }
@@ -306,6 +311,12 @@ namespace adt5
                 {
                     model.Render(device);
                 }
+
+                context.InputAssembler.InputLayout = shaders[4].Layout;
+                context.VertexShader.Set(shaders[4].VertexShader);
+                context.PixelShader.Set(shaders[4].PixelShader);
+
+                device.ImmediateContext.Draw(adt.hora.waterverticescount, 0);
 
                 swapChain.Present(0, PresentFlags.None);
             });
