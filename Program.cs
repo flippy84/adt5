@@ -2,6 +2,7 @@
 /*using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;*/
+using System.Collections.Generic;
 using System.Windows.Forms;
 using System.Drawing;
 
@@ -18,9 +19,15 @@ using Color = SharpDX.Color;
 
 using System.IO;
 using MapFlags = SharpDX.Direct3D11.MapFlags;
+using RecastManaged;
 
 namespace adt5
 {
+    static class Extensions
+    {
+        //static 
+    }
+
     class Shader
     {
         public VertexShader VertexShader { get; private set; }
@@ -44,6 +51,12 @@ namespace adt5
 
     static class Program
     {
+        private struct Constants
+        {
+            public Matrix m;
+            public Vector4 c;
+        }
+
         [STAThread]
         private static void Main()
         {
@@ -69,7 +82,7 @@ namespace adt5
             Device.CreateWithSwapChain(DriverType.Hardware, DeviceCreationFlags.Debug, desc, out device, out swapChain);
             var context = device.ImmediateContext;
 
-            var constantBuffer = new Buffer(device, Utilities.SizeOf<Matrix>(), ResourceUsage.Default, BindFlags.ConstantBuffer, CpuAccessFlags.None, ResourceOptionFlags.None, 0);
+            var constantBuffer = new Buffer(device, Utilities.SizeOf<Constants>(), ResourceUsage.Default, BindFlags.ConstantBuffer, CpuAccessFlags.None, ResourceOptionFlags.None, Utilities.SizeOf<Constants>());
 
             var vertices = new Buffer(device, new BufferDescription(400000 * Utilities.SizeOf<Vector4>() * 2, ResourceUsage.Dynamic, BindFlags.VertexBuffer, CpuAccessFlags.Write, ResourceOptionFlags.None, Utilities.SizeOf<Vector4>() * 2));
 
@@ -83,7 +96,6 @@ namespace adt5
                 new Shader(device, "Color.fx", new[]
                 {
                     new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 0),
-                    new InputElement("COLOR", 0, Format.R32G32B32A32_Float, 16, 0)
                 }),
                 new Shader(device, "Texture.fx", new[]
                 {
@@ -93,18 +105,15 @@ namespace adt5
                 }),
                 new Shader(device, "Color.fx", new[]
                 {
-                    new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 1),
-                    new InputElement("COLOR", 0, Format.R32G32B32A32_Float, 16, 1)
+                    new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 1)
                 }),
                 new Shader(device, "Color.fx", new[]
                 {
-                    new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 2),
-                    new InputElement("COLOR", 0, Format.R32G32B32A32_Float, 16, 2)
+                    new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 2)
                 }),
                 new Shader(device, "Color.fx", new[]
                 {
-                    new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 3),
-                    new InputElement("COLOR", 0, Format.R32G32B32A32_Float, 16, 3)
+                    new InputElement("POSITION", 0, Format.R32G32B32A32_Float, 0, 3)
                 })
             };
 
@@ -115,6 +124,7 @@ namespace adt5
             //context.InputAssembler.SetIndexBuffer(indices, Format.R32_SInt, 0);
             context.InputAssembler.PrimitiveTopology = PrimitiveTopology.TriangleList;
             context.VertexShader.SetConstantBuffer(0, constantBuffer);
+            context.PixelShader.SetConstantBuffer(0, constantBuffer);
             context.VertexShader.Set(shaders[1].VertexShader);
             context.PixelShader.Set(shaders[1].PixelShader);
 
@@ -123,7 +133,6 @@ namespace adt5
 
             var adt = new Adt(@"World\Maps\Azeroth\Azeroth_32_48.adt", device);
 
-            //vertexStream.WriteRange(adt.TerrainVertices);
             vertexStream.WriteRange(adt.TerrainVerticesTextured);
 
             context.UnmapSubresource(vertices, 0);
@@ -158,12 +167,14 @@ namespace adt5
                     case Keys.F2:
                         if (textured)
                         {
+                            vertices = new Buffer(device, new BufferDescription(400000 * Utilities.SizeOf<Vector4>() * 2, ResourceUsage.Dynamic, BindFlags.VertexBuffer, CpuAccessFlags.Write, ResourceOptionFlags.None, Utilities.SizeOf<Vector4>() * 2));
                             context.MapSubresource(vertices, MapMode.WriteNoOverwrite, MapFlags.None, out vertexStream);
                             vertexStream.WriteRange(adt.TerrainVertices);
                             context.UnmapSubresource(vertices, 0);
                         }
                         else
                         {
+                            vertices = new Buffer(device, new BufferDescription(400000 * Utilities.SizeOf<Vector4>(), ResourceUsage.Dynamic, BindFlags.VertexBuffer, CpuAccessFlags.Write, ResourceOptionFlags.None, Utilities.SizeOf<Vector4>()));
                             context.MapSubresource(vertices, MapMode.WriteNoOverwrite, MapFlags.None, out vertexStream);
                             vertexStream.WriteRange(adt.TerrainVerticesTextured);
                             context.UnmapSubresource(vertices, 0);
@@ -175,6 +186,75 @@ namespace adt5
                         var tmp = context.Rasterizer.State.Description;
                         tmp.FillMode = fillmode;
                         context.Rasterizer.State = new RasterizerState(device, tmp);
+                        break;
+                    case Keys.F4:
+                        HeightField hf;
+                        
+                        float[] bmin = adt.boundingBox.Minimum.ToArray();
+                        float[] bmax = adt.boundingBox.Maximum.ToArray();
+                        
+                        double TileSize = 1600.0 / 3;
+                        int VoxelCount = 1000;
+
+                        Config cfg = new Config()
+                        {
+                            bmin = bmin,
+                            bmax = bmax,
+                            ch = .1f,
+                            cs = (float)(TileSize / VoxelCount),
+                            walkableSlopeAngle = 45,
+                            maxSimplificationError = 1.3f,
+                            minRegionArea = 8*8,
+                            mergeRegionArea = 20*20,
+                            maxVertsPerPoly = 6,
+                            tileSize = VoxelCount
+                        };
+
+                        Recast.CalcGridSize(bmin, bmax, cfg.cs, out cfg.width, out cfg.height);
+
+                        cfg.walkableHeight = (int) Math.Ceiling(2.1 / cfg.ch);
+                        cfg.walkableClimb = (int) Math.Floor(1.0 / cfg.ch);
+                        cfg.walkableRadius = (int) Math.Ceiling(0.3 / cfg.cs);
+                        cfg.maxEdgeLen = (int) (12 / cfg.cs);
+
+                        bool result = Recast.CreateHeightfield(out hf, cfg.width, cfg.height, cfg.bmin, cfg.bmax, cfg.cs, cfg.ch);
+
+                        var vertices2 = new List<float>();
+
+                        foreach (var vertex in adt.TerrainVertices)
+                        {
+                            vertices2.AddRange(((Vector3) vertex).ToArray());
+                        }
+
+                        int count = adt.TerrainVertices.Length;
+                        var indices2 = new List<int>();
+
+                        for (int i = 0; i < count; i++)
+                        {
+                            indices2.Add(i + 1);
+                        }
+
+                        byte[] areas = new byte[indices2.Count / 3];
+                        Recast.MarkWalkableTriangles(cfg.walkableSlopeAngle, vertices2.ToArray(), vertices2.Count / 3, indices2.ToArray(), indices2.Count / 3, out areas);
+                        Recast.RasterizeTriangles(vertices2.ToArray(), vertices2.Count / 9, areas, hf);
+
+                        Recast.FilterLowHangingWalkableObstacles(cfg.walkableClimb, hf);
+                        Recast.FilterLedgeSpans(cfg.walkableHeight, cfg.walkableClimb, hf);
+                        Recast.FilterWalkableLowHeightSpans(cfg.walkableHeight, hf);
+
+                        CompactHeightField chf;
+                        Recast.BuildCompactHeightfield(cfg.walkableHeight, cfg.walkableClimb, hf, out chf);
+                        Recast.ErodeWalkableArea(cfg.walkableRadius, chf);
+                        Recast.BuildDistanceField(chf);
+                        Recast.BuildRegions(chf, cfg.borderSize, cfg.minRegionArea, cfg.mergeRegionArea);
+
+                        ContourSet cset;
+                        Recast.BuildContours(chf, cfg.maxSimplificationError, cfg.maxEdgeLen, out cset);
+                        PolyMesh mesh;
+                        Recast.BuildPolyMesh(cset, cfg.maxVertsPerPoly, out mesh);
+                        PolyMeshDetail dmesh;
+                        Recast.BuildPolyMeshDetail(mesh, chf, cfg.detailSampleDist, cfg.detailSampleMaxError, out dmesh);
+
                         break;
                 }
 
@@ -213,6 +293,7 @@ namespace adt5
             });
 
             form.UserResized += (target, arg) => resized = true;
+            Vector4 color = new Vector4(1, 1, 1, 1);
 
             RenderLoop.Run(form, () =>
             {
@@ -264,7 +345,12 @@ namespace adt5
                 var viewProj = Matrix.Multiply(view, proj);
                 var worldViewProj = viewProj;
                 worldViewProj.Transpose();
-                context.UpdateSubresource(ref worldViewProj, constantBuffer);
+
+                Constants constants;
+                constants.m = worldViewProj;
+                constants.c = color;
+
+                context.UpdateSubresource(ref constants, constantBuffer);
 
                 form.Text = "Origin: " + origin + ", Distance: " + (camera - origin).Length() + ", Pitch: " + pitch + ", Yaw: " + yaw;
 
@@ -280,6 +366,9 @@ namespace adt5
                 }
                 else
                 {
+                    constants.c = new Vector4(0, 1, 0, 1);
+                    context.UpdateSubresource(ref constants, constantBuffer);
+
                     context.InputAssembler.InputLayout = shaders[0].Layout;
                     context.VertexShader.Set(shaders[0].VertexShader);
                     context.PixelShader.Set(shaders[0].PixelShader);
@@ -292,6 +381,9 @@ namespace adt5
 
                 //Models
 
+                constants.c = new Vector4(1, 0, 0, 1);
+                context.UpdateSubresource(ref constants, constantBuffer);
+
                 context.InputAssembler.InputLayout = shaders[2].Layout;
                 context.VertexShader.Set(shaders[2].VertexShader);
                 context.PixelShader.Set(shaders[2].PixelShader);
@@ -303,6 +395,9 @@ namespace adt5
 
                 //Wmo
 
+                constants.c = new Vector4(1, 1, 0, 1);
+                context.UpdateSubresource(ref constants, constantBuffer);
+
                 context.InputAssembler.InputLayout = shaders[3].Layout;
                 context.VertexShader.Set(shaders[3].VertexShader);
                 context.PixelShader.Set(shaders[3].PixelShader);
@@ -311,6 +406,11 @@ namespace adt5
                 {
                     model.Render(device);
                 }
+
+                //Water
+
+                constants.c = new Vector4(0, 0, 1, 1);
+                context.UpdateSubresource(ref constants, constantBuffer);
 
                 context.InputAssembler.InputLayout = shaders[4].Layout;
                 context.VertexShader.Set(shaders[4].VertexShader);

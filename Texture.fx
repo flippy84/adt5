@@ -13,7 +13,7 @@ struct PS_IN
 };
 
 float4x4 worldViewProj;
-SamplerState pictureSampler;
+SamplerState pictureSampler[2];
 
 Texture2D layer[5];
 
@@ -33,11 +33,11 @@ float4 PS( PS_IN input ) : SV_Target
 	float4 color[5];
 	float4 ret;
 
-	color[0] = layer[0].Sample(pictureSampler, input.tex);
-	color[1] = layer[1].Sample(pictureSampler, input.tex);
-	color[2] = layer[2].Sample(pictureSampler, input.tex);
-	color[3] = layer[3].Sample(pictureSampler, input.tex);
-	color[4] = layer[4].Sample(pictureSampler, input.map);
+	color[0] = layer[0].Sample(pictureSampler[1], input.tex);
+	color[1] = layer[1].Sample(pictureSampler[1], input.tex);
+	color[2] = layer[2].Sample(pictureSampler[1], input.tex);
+	color[3] = layer[3].Sample(pictureSampler[1], input.tex);
+	color[4] = layer[4].Sample(pictureSampler[0], input.map);
 
 	//ret = lerp(color[0],color[3],color[4][0]);
 	//ret = lerp(color[0],color[1],color[4][2]);
@@ -47,6 +47,6 @@ float4 PS( PS_IN input ) : SV_Target
 	ret = lerp(ret, color[1], color[4][2]);
 	ret = lerp(ret, color[2], color[4][1]);
 
-	//return color[1];
+	//return color[4];
 	return ret;
 }

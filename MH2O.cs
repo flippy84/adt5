@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using System.Runtime.InteropServices;
+using System;
 
 namespace adt5
 {
@@ -43,14 +44,17 @@ namespace adt5
                         hej.MaskOffset += (int) position + 8;
 
                         info.File.Seek(hej.HeightmapOffset, SeekOrigin.Begin);
+                        if (hej.HeightmapOffset == 54246)
+                            Console.WriteLine(hej.HeightmapOffset);
                         t.Heights = new float[8,8];
                         for (int heightY = t.Y; heightY < t.Y + t.Height; heightY++)
                         {
                             for (int heightX = t.X; heightX < t.X + t.Width; heightX++)
                             {
-                                t.Heights[heightX, heightY] = info.File.ReadSingle();
-                                if (t.Heights[heightX, heightY] == 0)
-                                    t.Heights[heightX, heightY] = t.Level1;
+                                //t.Heights[heightX, heightY] = info.File.ReadSingle();
+                                /*if (t.Heights[heightX, heightY] == 0)
+                                    t.Heights[heightX, heightY] = t.Level1;*/
+                                t.Heights[heightX, heightY] = t.Level1;
                             }
                         }
 

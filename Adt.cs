@@ -37,7 +37,7 @@ namespace adt5
 
                 foreach (var mcnk in hora._info.MapChunks)
                 {
-                    vertices.AddRange(mcnk.TerrainVertices);
+                    vertices.AddRange(mcnk.TerrainVerticesColored);
                 }
 
                 return vertices.ToArray();
@@ -70,6 +70,8 @@ namespace adt5
             }
         }
 
+        public BoundingBox boundingBox;
+
         public Adt(string file, Device device)
         {
             var s = file.Split(new[] { '_', '.', '\\' });
@@ -79,10 +81,10 @@ namespace adt5
             int.TryParse(s[5], out Y);
             string map = s[3];
 
-            var min = new Vector3((X - 32) * chunkSize - border, float.MinValue, (32-Y) * chunkSize + border);
-            var max = new Vector3((X - 31) * chunkSize + border, float.MaxValue, (31-Y) * chunkSize - border);
+            var min = new Vector3((X - 32) * chunkSize - border, float.MinValue, (31-Y) * chunkSize - border);
+            var max = new Vector3((X - 31) * chunkSize + border, float.MaxValue, (32-Y) * chunkSize + border);
 
-            var boundingBox = new BoundingBox(min, max);
+            boundingBox = new BoundingBox(min, max);
 
             /*for (int y = Y - 1; y <= Y + 1; y++)
             {
@@ -255,67 +257,7 @@ namespace adt5
         public List<Model> adtmodels = new List<Model>();
         public List<Wmo> wmo_models = new List<Wmo>();
         public int waterverticescount;
-
-        private byte[,] alphamap = new byte[8,64 * 64 * 16 * 16];
-
-        private void ByteArrayToTexture(Device device, byte[ ] alpha)
-        {
-            var dds = new DDSHeader
-            {
-                Size = 124,
-                Flags = DDSD.Caps | DDSD.Height | DDSD.Width | DDSD.PixelFormat,
-                Caps = DDSCAPS.Texture,
-                Height = 1024,
-                Width = 1024,
-                PixelFormat = new DDSPixelFormat
-                {
-                    Size = 32,
-                    Flags = DDPF.Rgb,
-                    RGBBitCount = 24,
-                    RBitMask = 0x00FF0000,
-                    GBitMask = 0x0000FF00,
-                    BBitMask = 0x000000FF
-                }
-            };
-
-            //var jude = BitConverter.ToInt32(new [ ] { (byte) 'D', (byte) 'X', (byte) '1', (byte) '0' }, 0);
-
-            var file = new BinaryWriter(new MemoryStream());
-
-            var buffer = new byte[Marshal.SizeOf(dds)];
-            GCHandle h = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-            Marshal.StructureToPtr(dds, h.AddrOfPinnedObject(), false);
-            h.Free();
-
-            file.Write((int)Magic.DDS);
-            file.Write(buffer);
-
-            /*buffer = new byte[Marshal.SizeOf(dds2)];
-            h = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-            Marshal.StructureToPtr(dds2, h.AddrOfPinnedObject(),false);
-            h.Free();
-
-            file.Write(buffer);*/
-
-            for (int i = 0; i < alpha.Length; i++)
-            {
-                var b = alpha[i];
-                file.Write(b);
-            }
-
-            file.Seek(0, SeekOrigin.Begin);
-
-            var bytes = new BinaryReader(file.BaseStream).ReadBytes((int)file.BaseStream.Length);
-
-            var hora = new FileStream("kuk.dds", FileMode.Create);
-            hora.Write(bytes, 0, bytes.Length);
-            hora.Close();
-
-            var resource = Resource.FromMemory<Texture2D>(device, bytes);
-
-            device.ImmediateContext.PixelShader.SetShaderResource(4, new ShaderResourceView(device, resource));
-        }
-
+        
         public AdtFile(Int2 pos, string map, BoundingBox bbox, Device device)
         {
             File = new MpqFile(MpqArchive.Open(string.Format(@"World\Maps\{0}\{0}_{1}_{2}.adt", map, pos.X, pos.Y)));
@@ -335,7 +277,6 @@ namespace adt5
 
             var mcin = new MCIN(GetChunkPosition("MCIN"), _info);
 
-            byte[] alpha = new byte[4096 * 3 * 16 * 16];
             _info.MapChunks = new MCNK[16,16];
 
             for (int y = 0; y < 16; y++)
@@ -346,35 +287,26 @@ namespace adt5
                 }
             }
 
-            for (int y = 0; y < 1024; y++)
-            {
-                for (int x = 0; x < 16; x++)
-                {
-                    var kuk = _info.MapChunks[x, 15 - (y / 64)].mcal.alpha2;
-                    Array.Copy(kuk, (y % 64) * 64 * 3, alpha, (y * 1024 + x * 64) * 3, 64 * 3);
-                }
-            }
-
-            for (int y = 0; y < 16; y++)
-            {
-                for (int x = 0; x < 16; x++)
-                {
-                    for (int i = 1; i < _info.MapChunks[x, y].mcly.NumLayers; i++)
-                    {
-                        var index = _info.MapChunks[x, y].mcly.Layers[i].TextureId;
-                        var kuk = _info.MapChunks[x, y].mcal.alpha[i - 1];
-                    }
-                }
-            }
-
-            ByteArrayToTexture(device, alpha);
-
             var sampler = new SamplerState(device, new SamplerStateDescription
             {
                 Filter = Filter.MinMagMipPoint,
-                AddressU = TextureAddressMode.Wrap,
-                AddressV = TextureAddressMode.Wrap,
-                AddressW = TextureAddressMode.Wrap,
+                AddressU = TextureAddressMode.Clamp,
+                AddressV = TextureAddressMode.Clamp,
+                AddressW = TextureAddressMode.Clamp,
+                BorderColor = Color.Black,
+                ComparisonFunction = Comparison.Never,
+                MaximumAnisotropy = 16,
+                MipLodBias = 0,
+                MinimumLod = 0,
+                MaximumLod = 16,
+            });
+
+            var sampler2 = new SamplerState(device, new SamplerStateDescription
+            {
+                Filter = Filter.MinMagMipLinear,
+                AddressU = TextureAddressMode.Clamp,
+                AddressV = TextureAddressMode.Clamp,
+                AddressW = TextureAddressMode.Clamp,
                 BorderColor = Color.Black,
                 ComparisonFunction = Comparison.Never,
                 MaximumAnisotropy = 16,
@@ -384,6 +316,7 @@ namespace adt5
             });
 
             device.ImmediateContext.PixelShader.SetSampler(0, sampler);
+            device.ImmediateContext.PixelShader.SetSampler(1, sampler2);
 
             //Models
 
@@ -560,8 +493,8 @@ namespace adt5
             var context = device.ImmediateContext;
             if (_vertexBuffer == null)
             {
-                _vertexBuffer = new Buffer(device, Utilities.SizeOf<Vector4>() * 2 * 10000000, ResourceUsage.Dynamic, BindFlags.VertexBuffer, CpuAccessFlags.Write, ResourceOptionFlags.None, Utilities.SizeOf<Vector4>() * 2);
-                context.InputAssembler.SetVertexBuffers(2, new VertexBufferBinding(_vertexBuffer, Utilities.SizeOf<Vector4>() * 2, 0));
+                _vertexBuffer = new Buffer(device, Utilities.SizeOf<Vector4>() * 10000000, ResourceUsage.Dynamic, BindFlags.VertexBuffer, CpuAccessFlags.Write, ResourceOptionFlags.None, Utilities.SizeOf<Vector4>());
+                context.InputAssembler.SetVertexBuffers(2, new VertexBufferBinding(_vertexBuffer, Utilities.SizeOf<Vector4>(), 0));
             }
 
             DataStream stream;
@@ -569,8 +502,8 @@ namespace adt5
 
             stream.Seek(vertexOffset, SeekOrigin.Begin);
 
-            count = vertices.Length / 2;
-            index = (int)stream.Position / 32;
+            count = vertices.Length;
+            index = (int)stream.Position / 16;
 
             stream.WriteRange(vertices);
 
@@ -701,9 +634,9 @@ namespace adt5
                 {
                     vertices.AddRange(new[]
                     {
-                        vertices2[indices[i + 2]], color[i / 3 % 2].ToVector4(),
-                        vertices2[indices[i + 1]], color[i / 3 % 2].ToVector4(),
-                        vertices2[indices[i]], color[i / 3 % 2].ToVector4()
+                        vertices2[indices[i + 2]],
+                        vertices2[indices[i + 1]],
+                        vertices2[indices[i]]
                     });
                 }
 
@@ -846,8 +779,8 @@ namespace adt5
                 device.ImmediateContext.PixelShader.SetShaderResource(i, _textures[i < mcly.NumLayers ? mcly.Layers[i].TextureId : 0]);
             }
 
-            /*if(_hasAlphaMap)
-                device.ImmediateContext.PixelShader.SetShaderResource(4, mcal.maps);*/
+            //if(_hasAlphaMap)
+            device.ImmediateContext.PixelShader.SetShaderResource(4, mcal.maps);
 
             device.ImmediateContext.Draw(vertexCount, StartIndex);
         }
@@ -908,7 +841,7 @@ namespace adt5
             }
         }
 
-        public Vector4[ ] TerrainVertices
+        public Vector4[ ] TerrainVerticesColored
         {
             get
             {
@@ -926,33 +859,32 @@ namespace adt5
 
                         vertices.AddRange(new[ ]
                         {
-                            new Vector4(OuterPositions[x + 1, y], 1f), color,
-                            new Vector4(OuterPositions[x, y], 1f), color,
-                            new Vector4(MiddlePositions[x, y], 1f), color,
+                            new Vector4(OuterPositions[x + 1, y], 1f),
+                            new Vector4(OuterPositions[x, y], 1f),
+                            new Vector4(MiddlePositions[x, y], 1f),
 
-                            new Vector4(OuterPositions[x + 1, y + 1], 1f), color2,
-                            new Vector4(OuterPositions[x + 1, y], 1f), color2,
-                            new Vector4(MiddlePositions[x, y], 1f), color2,
+                            new Vector4(OuterPositions[x + 1, y + 1], 1f),
+                            new Vector4(OuterPositions[x + 1, y], 1f),
+                            new Vector4(MiddlePositions[x, y], 1f),
 
 
-                            new Vector4(OuterPositions[x, y + 1], 1f), color,
-                            new Vector4(OuterPositions[x + 1, y + 1], 1f), color,
-                            new Vector4(MiddlePositions[x, y], 1f), color,
+                            new Vector4(OuterPositions[x, y + 1], 1f),
+                            new Vector4(OuterPositions[x + 1, y + 1], 1f),
+                            new Vector4(MiddlePositions[x, y], 1f),
 
-                            new Vector4(OuterPositions[x, y], 1f), color2,
-                            new Vector4(OuterPositions[x, y + 1], 1f), color2,
-                            new Vector4(MiddlePositions[x, y], 1f), color2
+                            new Vector4(OuterPositions[x, y], 1f),
+                            new Vector4(OuterPositions[x, y + 1], 1f),
+                            new Vector4(MiddlePositions[x, y], 1f)
                         });
                     }
                 }
 
-                vertexCount = vertices.Count / 2;
+                vertexCount = vertices.Count;
 
                 if (vertexCount < 768)
                 {
                     for (int i = 0; i < 768 - vertexCount; i++)
                     {
-                        vertices.Add(Vector4.Zero);
                         vertices.Add(Vector4.Zero);
                     }
                 }
@@ -999,7 +931,7 @@ namespace adt5
         public MCAL mcal;
         public MCVT HeightChunk;
 
-        private bool _hasAlphaMap = false;
+        public bool HasAlphaMap = false;
 
         public MCNK(long offset, AdtInfo info)
             : base(offset, info)
@@ -1014,7 +946,7 @@ namespace adt5
 
             if (mcnkInfo.AlphaSize - 8 != 0)
             {
-                _hasAlphaMap = true;
+                HasAlphaMap = true;
 
                 mcal = new MCAL(mcnkInfo.AlphaOffset + Position, info, mcly.Layers);
             }
@@ -1049,8 +981,11 @@ namespace adt5
                     OuterPositions[x, y].Z = y * 25 / 6f - 1600 / 48f;
                     OuterPositions[x, y] += mcnkInfo.Position;
 
-                    _outerUV[x, y].X = x * 1 / 128f + 1 / 16f * mcnkInfo.IndexX;
-                    _outerUV[x, y].Y = y * 1 / 128f + 1 / 16f * (15 - mcnkInfo.IndexY);
+                    /*_outerUV[x, y].X = x * 1 / 128f + 1 / 16f * mcnkInfo.IndexX;
+                    _outerUV[x, y].Y = y * 1 / 128f + 1 / 16f * (15 - mcnkInfo.IndexY);*/
+
+                    _outerUV[x, y].X = x * 1 / 8f;
+                    _outerUV[x, y].Y = y * 1 / 8f;
                 }
             }
 
@@ -1063,8 +998,11 @@ namespace adt5
                     MiddlePositions[x, y].Z = y * 25 / 6f + 25 / 12f - 1600 / 48f;
                     MiddlePositions[x, y] += mcnkInfo.Position;
 
-                    _middleUV[x, y].X = (x) * 1 / 128f + 1 / 256f + 1 / 16f * mcnkInfo.IndexX;
-                    _middleUV[x, y].Y = (y) * 1 / 128f + 1 / 256f + 1 / 16f * (15 - mcnkInfo.IndexY);
+                    /*_middleUV[x, y].X = x * 1 / 128f + 1 / 256f + 1 / 16f * mcnkInfo.IndexX;
+                    _middleUV[x, y].Y = y * 1 / 128f + 1 / 256f + 1 / 16f * (15 - mcnkInfo.IndexY);*/
+
+                    _middleUV[x, y].X = x * 1 / 8f + 1 / 16f;
+                    _middleUV[x, y].Y = y * 1 / 8f + 1 / 16f;
                 }
             }
         }
